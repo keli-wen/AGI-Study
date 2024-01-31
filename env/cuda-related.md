@@ -1,4 +1,10 @@
 # CUDA-Related Env Config
+- [CUDA-Related Env Config](#cuda-related-env-config)
+  - [1. 🔥 Update (Cuda) GPU Driver and CUDA Toolkit.](#1--update-cuda-gpu-driver-and-cuda-toolkit)
+  - [2. Update GPU Driver Only](#2-update-gpu-driver-only)
+  - [3. Multi-CUDA Management](#3-multi-cuda-management)
+  - [BUG](#bug)
+    - [X 服务器问题](#x-服务器问题)
 
 在进行 CUDA 相关的环境配置前，我们需要先搞清楚，CUDA-Related Env 的配置的基础知识。
 
@@ -51,7 +57,7 @@ Wed Jan 24 11:43:58 2024
 1. 首先应该看，$X$ 是否大于 $Z$。如果大于 $Z$，则需要先**更新 GPU Driver**，然后跳转至步骤 2。
 2. 如果 $X$ 小于 $Z$，那么我们只需要**更新 NVCC 即可**。
 
-## 1. Update (Cuda) GPU Driver and CUDA Toolkit.
+## 1. 🔥 Update (Cuda) GPU Driver and CUDA Toolkit.
 
 > 【推荐方案】如果你需要更新 CUDA 版本，这个小节可以同时更新 GPU Driver 和 Cuda Toolkit 的版本。你只需要确定自己需求的 CUDA 版本即可。（也就是同时更新 NVCC 和 Nvidai-smi）
 
@@ -102,7 +108,7 @@ $ sudo sh cuda_12.1.0_530.30.02_linux.run
 
 在运行安装命令后会得到如下的界面，你可以根据你的需求进行更新，如果不需要更新 Driver 或者不需要更新 CUDA Toolkit 则取消勾选即可。
 
-![image-20240131233332674](./assets/image-20240131233332674.png)
+![cuda-installer](./assets/cuda-installer.png)
 
 接下来按下 Install 就会安装成功了，安装成功后会得到这样的 Summary 信息：
 
@@ -128,7 +134,31 @@ Logfile is /var/log/cuda-installer.log
 
 ## 2. Update GPU Driver Only
 
-TODO
+个人目前并没有遇到只需要更新驱动的场景。但流程也是类似，首先在下面的官方链接中找到 target 版本。
+
+- https://www.nvidia.cn/Download/index.aspx?lang=cn
+- https://www.nvidia.cn/Download/Find.aspx?lang=cn
+
+然后卸载之前的旧版驱动，命令与之前相同。
+
+```
+$ sudo apt purge nvidia-*
+$ sudo apt autoremove
+$ sudo reboot
+```
+
+随后使用， `wget` 进行下载。同样得到一个 `.run` 文件，使用命令安装：
+
+```
+sudo sh NVIDIA-Linux-x86_64-<version>.run --no-x-check
+```
+
+这里的 `--no-x-check` 可以避免后续的 X Server 的潜在运行问题。
+
+由于我本人还没有遇到这种场景，我这里推荐两个写的不错的博客：
+
+- [linux 命令行下适配 nvidia 驱动](https://www.cnblogs.com/chua-n/p/13208398.html)
+- [NVIDIA显卡驱动更新，NVIDIA Driver、CUDA Toolkit、cuDNN安装指南（稍微有点乱，但是bug收集的比较多）](https://blog.csdn.net/aiaidexiaji/article/details/131973342)
 
 ## 3. Multi-CUDA Management
 
@@ -234,6 +264,4 @@ Warning: journal has been rotated since unit was started, output may be incomple
 
 $ ps aux | grep X
 xxx+   62621  0.0  0.0   8172  2404 pts/0    S+   16:03   0:00 grep --color=auto X
-
 ```
-
