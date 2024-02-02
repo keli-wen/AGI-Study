@@ -61,7 +61,7 @@ Wed Jan 24 11:43:58 2024
 
 > 【推荐方案】如果你需要更新 CUDA 版本，这个小节可以同时更新 GPU Driver 和 Cuda Toolkit 的版本。你只需要确定自己需求的 CUDA 版本即可。（也就是同时更新 NVCC 和 Nvidai-smi）
 
-首先，我们可以在 NVIDIA 的官方网站 [CUDA Toolkit Archive](https://developer.nvidia.com/cu da-toolkit-archive) 中选择对应的 **Archived Releases**。这里我选择的是 [CUDA Toolkit 12.1](https://developer.nvidia.com/cuda-12-1-0-download-archive)。这里需要你根据自己服务器的具体情况进行选择：
+首先，我们可以在 NVIDIA 的官方网站 [CUDA Toolkit Archive](https://developer.nvidia.com/cuda-toolkit-archive) 中选择对应的 **Archived Releases**。这里我选择的是 [CUDA Toolkit 12.1](https://developer.nvidia.com/cuda-12-1-0-download-archive)。这里需要你根据自己服务器的具体情况进行选择：
 
 ![cuda-toolkit-12.1](./assets/cuda-toolkit-12.1.png)
 
