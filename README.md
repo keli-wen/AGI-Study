@@ -1,11 +1,13 @@
-# AGI-Study
+# 🤖AGI-Study
 
 - [AGI-Study](#agi-study)
   - [Environment](#environment)
   - [Train](#train)
+  - [Optimization](#optimization)
   - [Inference](#inference)
   - [Demo](#demo)
   - [Basic](#basic)
+
 
 我建立这个 Repo 的初衷是以 Code 指导理论学习，所以我会尽量以 Code 为主，以应用为主。
 
