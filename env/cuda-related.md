@@ -162,7 +162,63 @@ sudo sh NVIDIA-Linux-x86_64-<version>.run --no-x-check
 
 ## 3. Multi-CUDA Management
 
-TODO
+如何切换当前的 CUDA 版本？
+
+在进行深度学习或 GPU 加速计算的工作中，有时你可能需要在不同的 CUDA 版本之间切换。这可以通过修改环境变量轻松完成。以下是在 Linux 系统中切换 CUDA 版本的步骤：
+
+**第一步：定位CUDA安装路径**
+
+首先，你需要知道不同版本的CUDA安装在你的系统上的确切路径。通常，CUDA会安装在如下路径：
+
+```bash
+/usr/local/cuda-<version>
+```
+
+例如，CUDA 10.1可能安装在`/usr/local/cuda-10.1`。
+
+**第二步：编辑环境配置文件** 接下来，你需要编辑你的shell配置文件。这通常是`~/.bashrc`（对于bash用户）或`~/.zshrc`（对于zsh用户）。一般我会使用 vim 编辑，（新手提醒：用 `i` 进入“编辑模式”，修改后， `esc + : + wq` 即可。）
+
+```bash
+vim ~/.bashrc  # 对于bash用户
+vim ~/.zshrc   # 对于zsh用户
+```
+
+**第三步：更新环境变量** 在配置文件中，你需要修改或添加指向新 CUDA 版本的环境变量。主要涉及以下几个变量：
+
+- `CUDA_HOME`
+- `LD_LIBRARY_PATH`
+- `PATH`
+
+> 虽然我们经常会进行这些环境配置，但是我发现如果不搞清楚**我们为什么要这样配置**很容易忘记这个步骤，所以我想知道我们修改的到底是什么，之后印象才会更深。（改编自 GPT4，由本人校验）
+>
+> - `CUDA_HOME`: `CUDA_HOME` 是一个环境变量，通常用于指向你的CUDA安装目录。这个变量主要用于帮助软件和脚本找到CUDA的安装位置。虽然不是所有的程序都会使用`CUDA_HOME`，但它通常被用于**配置深度学习和其他需要GPU加速的应用程序**。
+> - `PATH`: `PATH` 是一个环境变量，它告诉操作系统在哪些目录下**查找可执行文件**。当你在命令行输入一个命令时，系统会在`PATH`变量指定的目录中搜索这个命令对应的可执行文件。对于CUDA来说，将CUDA的`bin`目录添加到`PATH`变量中，意味着你可以直接从任何位置运行CUDA工具，比如`nvcc`（NVIDIA的CUDA编译器）。
+> - `LD_LIBRARY_PATH`: `LD_LIBRARY_PATH` 是一个环境变量，**它用于指定动态链接器在运行时搜索共享库（动态库）的路径**。在Linux系统中，共享库通常是`.so`文件。当你在程序中使用动态链接库时（例如，CUDA的动态库），操作系统会查看`LD_LIBRARY_PATH`变量以确定在哪里寻找这些库。将CUDA的`lib64`目录添加到`LD_LIBRARY_PATH`可以确保程序能够找到并正确链接CUDA的动态库。PS：**LD**可以理解为 Loader or Linker，参考 [StackOverflow: What LD stand for on LD_LIBRARY_PATH variable on *unix?](https://stackoverflow.com/questions/1814459/what-ld-stand-for-on-ld-library-path-variable-on-unix)
+
+添加或修改这些行以反映你想要使用的CUDA版本的路径。例如，如果你想切换到CUDA 10.1，你可以这样做：
+
+```bash
+export CUDA_HOME=/usr/local/cuda-10.1
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+export PATH=${CUDA_HOME}/bin:${PATH}
+```
+
+确保替换`/usr/local/cuda-10.1`为实际的CUDA安装路径。
+
+**第四步：使更改生效** 保存并关闭配置文件后，你需要使更改生效。
+
+```bash
+source ~/.bashrc  # 对于bash用户
+source ~/.zshrc   # 对于zsh用户
+```
+
+**第五步：验证CUDA版本** 最后，验证更改是否成功。使用以下命令来检查当前的CUDA版本：
+
+```bash
+nvcc --version
+```
+
+这应该显示我们刚刚选择的 CUDA 版本信息。通过以上步骤，可以轻松地在不同的CUDA版本之间进行切换，以适应不同的项目和框架要求。
 
 ## BUG
 
