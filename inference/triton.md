@@ -115,7 +115,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$CONDA_PREFIX/lib
 
 > 其中 `CONDA_PREFIX` 是一个环境变量，它表示当前激活的conda环境的路径。当你使用conda激活一个特定的环境时，conda会自动设置`CONDA_PREFIX`变量来指向那个环境的根目录。而关于 **LD_LIBRARY_PATH** 是什么可以参考我的仓库中的 [`env/cuda-related.md`](https://github.com/keli-wen/AGI-Study/blob/master/env/cuda-related.md#3-multi-cuda-management)。
 
-**注意我们不能直接在 `~/.bashrc` 或者 `~/.zshrc` 中添加上述命令**。因为我们需要 source 保证更新被应用，但是**通常情况**下 source 会改变当前 conda 虚拟环境，使得 `CONDA_PREFIX` 恒定为 `/opt/conda`（也就是 base 环境）。
+**⚠️注意我们不能直接在 `~/.bashrc` 或者 `~/.zshrc` 中添加上述命令**。因为我们需要 source 保证更新被应用，但是**通常情况**下 source 会改变当前 conda 虚拟环境，使得 `CONDA_PREFIX` 恒定为 `/opt/conda`（也就是 base 环境）。
 
 ## Introduction
 
@@ -233,6 +233,200 @@ print(result_dict)
 
 这样看来，PyTriton 确实大大简化了 Triton Inference Server 的使用流程。
 
+## Deep
+
+### `TritonConfig`
+
+TritonConfig 主要是定制化服务器的一些配置。在**通常情况下我们可能不需要对此进行设置**，如果需要设置请参考 [TritonConfig](https://triton-inference-server.github.io/pytriton/latest/reference/triton_config/)。
+
+### Binding Models to Triton
+
+PyTriton 使用 `bind` 方法来告诉 Triton 如何处理模型推理请求。所以完全的了解 `bind` 操作对于我们熟练使用 PyTriton 非常重要。见这个简单的 Example：
+
+```python
+import numpy as np
+from pytriton.decorators import batch
+from pytriton.model_config import ModelConfig, Tensor
+from pytriton.triton import Triton
+
+
+@batch
+def infer_fn(**inputs: np.ndarray):
+    input1, input2 = inputs.values()
+    outputs = model(input1, input2)
+    return [outputs]
+
+with Triton() as triton:
+  triton.bind(
+      model_name="ModelName",
+      infer_func=infer_fn,
+      inputs=[
+          Tensor(shape=(1,), dtype=np.bytes_),  # sample containing single bytes value
+          Tensor(shape=(-1,), dtype=np.bytes_)  # sample containing vector of bytes
+      ],
+      outputs=[
+          Tensor(shape=(-1,), dtype=np.float32),
+      ],
+      config=ModelConfig(max_batch_size=8),
+      strict=True,
+  )
+```
+
+我们发现 `triton.bind()` 包含如下参数：
+
+- `model_name`：一个字符串，代表 Triton Inference Server 中可用的 Model 名，在发送请求时有用。
+- `infer_func`：Python 函数，代表 Triton Inference Server 该如何处理推理请求。
+- `inputs`：定义模型输入参数的数量，类型和形状。
+- `outputs`：定义模型输出参数的数量，类型和形状。
+- `config`：用于对 Triton Inference Server 上的模型部署进行更多定制，比如 `batching` 和 `max_batch_size` 等。
+- `strict`：启用对**推理输出**的数据类型和形状进行验证，以确保其符合提供的模型配置（默认为：`False`）。
+
+### Inference Callable
+
+Inference Callable 主要是与 `infer_fn` 相关。正常情况下便是简单定义一个函数处理输入输出即可。接下来我们考虑一些更为复杂的场景。
+
+**❓Q：在多 Instance 背景下，如何定义 `infer_fn`呢？**
+
+当我们存在多个不同场景下的推理任务，我们需要提供一个 Inference Callable 的列表。 **区别于使用 Python 函数，在多任务情况下我们倾向于使用 Wrapper Class，这是因为类可以保持状态，避免开销。** 如下，可以参考一段 code，我们定义了一个 `_InferFuncWrapper` 用来在不同 device 下进行模型推理任务。
+
+```python
+import torch
+from pytriton.decorators import batch
+
+
+class _InferFuncWrapper:
+    def __init__(self, model: torch.nn.Module, device: str):
+        self._model = model
+        self._device = device
+
+    @batch
+    def __call__(self, **inputs):
+        (input1_batch,) = inputs.values()
+        input1_batch_tensor = torch.from_numpy(input1_batch).to(self._device)
+        output1_batch_tensor = self._model(input1_batch_tensor)
+        output1_batch = output1_batch_tensor.cpu().detach().numpy()
+        return [output1_batch]
+```
+
+然后再使用一个工厂函数来创建各种需要的 `_InferFuncWrapper`。
+
+```python
+import numpy as np
+from pytriton.triton import Triton
+from pytriton.model_config import ModelConfig, Tensor
+
+
+def _infer_function_factory(devices):
+    infer_fns = []
+    for device in devices:
+        model = torch.nn.Linear(20, 30).to(device).eval()
+        infer_fns.append(_InferFuncWrapper(model=model, device=device))
+
+    return infer_fns
+
+
+with Triton() as triton:
+  triton.bind(
+      model_name="Linear",
+      infer_func=_infer_function_factory(devices=["cuda", "cpu"]),
+      inputs=[
+          Tensor(dtype=np.float32, shape=(-1,)),
+      ],
+      outputs=[
+          Tensor(dtype=np.float32, shape=(-1,)),
+      ],
+      config=ModelConfig(max_batch_size=16),
+  )
+  ...
+```
+
+### Defining Inputs and Outputs
+
+如何在使用 Triton Inference Server 时需要定义 input 和 output 的 shape，数据类型，PyTriton 同样需要你进行定义。**这是我在最初进行实践时遇到过最棘手的问题。尤其是当 input 为字符串类型的 prompt 时，我们可以参考 official example 来解决字符串 prompt input 可能的问题。**
+
+举个简单的例子：
+
+```python
+import numpy as np
+from pytriton.model_config import Tensor
+
+inputs = [
+    Tensor(dtype=np.float32, shape=(-1,)),
+]
+output = [
+    Tensor(dtype=np.float32, shape=(-1,)),
+    Tensor(dtype=np.int32, shape=(-1,)),
+]
+```
+
+这里就定义了一个输入和两个输出。并且需要注意的是：`-1` 代表动态的输入或输出 shape（**注意这里的 `-1` 并不意味着支持 batch**），如果想要准确的定义 shape，则需要全部写全，例如：`Tensor(name="image", dtype=np.float32, shape=(224, 224, 3))`。
+
+而 `dtype` 参数可以是`numpy.dtype`，`numpy.dtype.type` 或者 `str`，例如：
+
+```python
+import numpy as np
+from pytriton.model_config import Tensor
+
+tensor1 = Tensor(name="tensor1", shape=(-1,), dtype=np.float32),
+tensor2 = Tensor(name="tensor2", shape=(-1,), dtype=np.float32().dtype),
+tensor3 = Tensor(name="tensor3", shape=(-1,), dtype="float32"),
+```
+
+> 当使用 `bytes` 数据类型时，NumPy会删除尾随的 `\x00` 字节。因此，如果当时数据可能出现任何字节（原文中说的是 arbitrary bytes），需要使用 `object` 数据类型。
+>
+> ```python
+> > np.array([b"\xff\x00"])
+> array([b'\xff'], dtype='|S2')
+> 
+> > np.array([b"\xff\x00"], dtype=object)
+> array([b'\xff\x00'], dtype=object)
+> ```
+>
+> **这里的 `|S2` 有小伙伴可能比较困惑，其实就代表每个元素都是一个 `bytes` 类型。其中 2 代表最长的字节数，不理解的请稍微往下浏览，后续还会通过 example 进行解释。** 
+>
+> 但是，如果当我们是对 `string` 进行编码时，为了方便我们**可以使用 `bytes` 类型**。
+>
+> 首先，`\x00` 代表空字符，而标准文本字符串（如UTF-8编码的字符串）一般不包含 `\x00` 字节。所以我们在处理**prompt时可以放心的使用 `bytes`，对于非文本数据（如二进制文件内容、某些特殊格式的字符串或其他任意字节数据），在转换为 `bytes` 时可能会包含 `\x00` 字节。这类数据中的 `\x00` 字节可能是数据的一部分，因此在这种情况下使用 `object` 类型更为安全，以避免在处理（如存储或传输）时丢失这些重要的字节。**
+>
+> 在 Python 中，`bytes` 类型是一个不可变的序列，用于存储字节（即0到255范围内的整数）。它通常用于处理二进制数据，如文件读写、网络通信中的数据传输，以及在处理原始数据时（如图像或声音文件的内容）。【GPT4解释】
+
+所以当我们处理 prompt 输入时，可以参考 [NVIDIA official example: hugging face bart pytorch](https://github.com/triton-inference-server/pytriton/blob/main/examples/huggingface_bart_pytorch/client.py#L61-L68)。我们使用 [`np.char.encode`](https://numpy.org/doc/stable/reference/generated/numpy.char.encode.html) 为 sequence 中的每个字符次进行编码。这里的 48 代表的便是 np 数组中最长的字符串所占字符数。
+
+```python
+sequence = np.array(
+    [
+        ["one day I will see the world"],
+        ["I would love to learn cook the Asian street food"],
+        ["Carnival in Rio de Janeiro"],
+        ["William Shakespeare was a great writer"],
+    ]
+)
+"""
+> sequence
+array([['one day I will see the world'],
+       ['I would love to learn cook the Asian street food'],
+       ['Carnival in Rio de Janeiro'],
+       ['William Shakespeare was a great writer']], dtype='<U48')
+"""
+sequence = np.char.encode(sequence, "utf-8")
+"""
+> sequence
+array([[b'one day I will see the world'],
+       [b'I would love to learn cook the Asian street food'],
+       [b'Carnival in Rio de Janeiro'],
+       [b'William Shakespeare was a great writer']], dtype='|S48')
+"""
+```
+
+而 Triton 服务端端 input 和 output 设置如下所示，并不是 `(4,1)` ，因为 `4` 是 batch 数，由 `infer_fn` 中的 `@batch` 修饰器处理。
+
+```python
+inputs=[Tensor(name="sequence", dtype=bytes, shape=(1,))],
+outputs=[Tensor(name="label", dtype=bytes, shape=(1,))],
+```
+
+
+
 ## BUG
 
 这里收集了一些 Installation 和 Runtime 中出现的 bug。
@@ -256,6 +450,26 @@ $ python example_1.py
 > 1. **GLIBCXX**：`GLIBCXX` 是 GNU C++ Standard Library（标准C++库）的一部分，是 GCC（GNU Compiler Collection）的一部分。不同版本的 GCC 附带不同版本的 GLIBCXX 库。当软件或代码编译时，它们可能依赖于特定版本的 GLIBCXX，因此运行这些程序时需要确保系统具有相应版本的 GLIBCXX。
 >
 > 2. **libstdcxx-ng**：`libstdcxx-ng` 是在 Conda 生态系统中提供的 GNU C++ Standard Library 的包。它是 GCC 的 C++ 库的 Conda 版本，包括 `libstdc++.so` 共享库。通过安装特定版本的 `libstdcxx-ng` 包，可以在 Conda 环境中提供对应版本的 GLIBCXX。
+
+## vLLM optimization
+
+> 这个还挺重要的，感觉能出 2～3 个PR。
+>
+> 如果可以最后还可以实际的测一下性能的对比。
+
+我有一个困惑是 PyTriton + vLLM 的组合能否一起使用呢？经过验证这实际上是可行的。
+
+可以参考的文献：
+
+- [Binding Models to Triton](https://triton-inference-server.github.io/pytriton/latest/binding_models/)
+- [NVIDIA PyTriton Example: vLLM](https://github.com/triton-inference-server/pytriton/tree/main/examples/vllm)
+  - 问题一，没有清晰的展示单一 prompt 和 batch prompt 的使用区别？
+- [NVIDIA PyTriton Example: BART-PyTorch](https://github.com/triton-inference-server/pytriton/tree/main/examples/huggingface_bart_pytorch)
+  - 展示了，但是直接使用在 vLLM 中会出现问题。
+
+```
+
+```
 
 # Reference
 
