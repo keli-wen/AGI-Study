@@ -72,6 +72,11 @@ def read_item(item_id: int, q: Union[str, None] = None):
     return {"item_id": item_id, "q": q}
 ```
 
+- 通过 `uvicorn main:app --reload` 来启动 server。
+- 或者在 Python 文件中定义好 `uvicorn.run(app, host, port)` 并直接运行 python 脚本。
+  - 如果要在 Python 文件中使用 `uvicorn.run` 的同时使用 `reload` 参数，请注意要使用类似于：`uvicorn.run("main:app", host, port, reload=True)`
+
+
 <details>
     <summary>About the command <code>uvicorn main:app --reload</code>...</summary>
     <p>The command <code>uvicorn main:app</code> refers to:</p>
@@ -149,7 +154,7 @@ curl -X 'PUT' \
 
 ### More
 
-> 这段由于我对于 web 开发了解太少不敢妄加翻译，敬留下官方文档用以保持文章的覆盖面。
+> 这段由于我对于 web 开发了解太少不敢妄加翻译，敬留下官方文档用以保证文章的覆盖面。
 
 For a more complete example including more features, see the [Tutorial - User Guide](https://fastapi.tiangolo.com/tutorial/).
 
