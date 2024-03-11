@@ -1,0 +1,2 @@
+ufmt format .
+ruff check .
