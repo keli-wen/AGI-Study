@@ -1,5 +1,4 @@
 import json
-import logging
 
 import numpy as np
 import streamlit as st
@@ -12,28 +11,14 @@ st.session_state["MODEL-NAME"] = "deepseek-llm-7b-chat"
 st.session_state["URL"] = "grpc://127.0.0.1:8001"
 
 
-@st.cache_resource
-def build_client(url: str, model_name: str) -> ModelClient:
-    """streamlit-cached function to build client."""
-    return ModelClient(url, model_name)
-
-
-# Get the logging.
-logger = logging.getLogger("examples.chat-llm.client")
-
-
-# Create the cached client.
-client = build_client(st.session_state["URL"], st.session_state["MODEL-NAME"])
+# Create the PyTriton client.
+st.session_state["client"] = ModelClient(
+    url=st.session_state["URL"], model_name=st.session_state["MODEL-NAME"]
+)
 
 
 def chat_page():
     """Chat page for ChatGPT Whisper."""
-    log_level = logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(levelname)s - %(name)s: %(message)s",
-    )
-
     # Use `st.session_state.history_messages` to store the chat history.
     if "history_messages" not in st.session_state:
         st.session_state.history_messages = []
@@ -43,7 +28,8 @@ def chat_page():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if prompt := st.chat_input("Message GPT..."):
+    # Get the user's prompt. := is the walrus operator.
+    if prompt := st.chat_input("Message Chat-bot..."):
         # Update the chat history with the user's prompt.
         st.session_state.history_messages.append(
             {"role": "user", "content": prompt}
@@ -61,7 +47,9 @@ def chat_page():
             )
 
             # Step2. Send the inference request to the triton inference server.
-            response_dict = client.infer_sample(messages=np_messages)
+            response_dict = st.session_state["client"].infer_sample(
+                messages=np_messages
+            )
 
             # Step3. Decode the response and show it in the front-end.
             response = response_dict["response"][0].decode("utf-8")
