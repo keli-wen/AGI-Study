@@ -194,7 +194,7 @@ def _infer_fn(messages: np.ndarray) -> np.ndarray:
 
 在 Version2 中我会进行更多的拓展，补充诸如 `vLLM` 的推理优化，PyTriton 的 `Dynamic Batching` 与文本流式输出等高级特性。
 
-更进一步，我会尽力的做出 PyTriton 相关的专业技术博客与 vLLM 源代码分析。希望能帮助大家更好的理解模型推理与部署的全流程。在 Applied AI 中更进一步。
+之后，我会尽力的做出 PyTriton 相关的专业技术博客与 vLLM 源代码分析。希望能帮助大家更好的理解模型推理与部署的全流程。在 Applied AI 中更进一步。
 
 ## Reference
 - [🤗 Huggingface: deepseek-llm-7b-chat](https://huggingface.co/deepseek-ai/deepseek-llm-7b-chat#chat-completion)
