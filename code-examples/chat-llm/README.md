@@ -1,14 +1,20 @@
+![chat-llm-demo-header](chat-llm-demo-header.png)
+
 # Chat-LLM DEMO V1
 
-我一直希望讲一讲模型推理，部署和 DEMO 的全流程。因为个人学习时总希望能对整个流程有一个认知。如果仅仅是让模型运行起来很简单，如何做 DEMO 也有很多精品博客。而我的爱好是做 minimum example，**确保每行 code 的必要性，避免不必要的炫技**，符合当前博客主题（入门 or 深入）。同时享受跑通 DEMO 带来的更高的满足感。
+我一直希望写一写模型推理，部署和 DEMO 的全流程。因为个人学习时总希望能对整个流程有一个认知。如果仅仅是让模型运行起来很简单，如何做 DEMO 也有很多精品博客。而我的爱好是做 minimum example，**确保每行 code 的必要性，避免不必要的炫技**，符合当前博客主题（入门 or 深入）。同时享受跑通 DEMO 带来的更高的满足感。
 
 本篇主要作为一个 Base，旨在先从实战出发。后续我会基于此给出，`PyTriton`（部署） 和 `vLLM`（推理） 的相关博客。虽然这个 topic(chat-bot) 比较烂大街，但是胜在简单，容易出效果。我会尽力用最精简的语言，带大家了解一下整个的 pipeline。
+
+在我之前尝试做一个 Internal DEMO 的时候，我发现我对除了 Training 之外的内容了解极少，对于各种部署，推理方案更是一无所知。检索了一堆资料，东拼西凑才有了一个大概的概念。由此发现中文互联网上这方面内容有所缺乏，因此我尽力选择了一些比较热门的工具和项目（Triton Inference Server 和 vLLM），保证内容时效性的同时尽力让大家脑海里有一个简单的认知雏形。
+
+提前声明：我的这篇博客仅仅是为了让大家有一个概念，看看实际的 Code 是如何串联起这几个环节的，扫一扫盲，内容非常简单，欢迎大家讨论。
 
 Example 计划会有两个版本，内容包括：
 - [x] `transformers` for model.
 - [x] `streamlit` for front-end.
-- [x] `pytriton` for model deployment (non-batch infer).
-- [ ] `pytriton` for model deployment (dynamic batching infer).
+- [x] `pytriton` for model deployment. (non-batch infer)
+- [ ] `pytriton` for model deployment. (dynamic batching infer)
 - [ ] `vLLM` for inference optimization. (maybe in the V2)
 - [ ] Streaming ouput for better user experience. (maybe in the V2)
 
@@ -19,7 +25,7 @@ Example 计划会有两个版本，内容包括：
 
 ## Installation
 如下为 Example 所需的依赖。欢迎大家进行补充。
-> ⚠️ 如果存在网络问题 `export HF_ENDPOINT=https://hf-mirror.com`。
+> ⚠️ 如果存在网络问题，请使用 `export HF_ENDPOINT=https://hf-mirror.com`。
 
 ```bash
 # For front-end.
@@ -36,6 +42,7 @@ pip install -U nvidia-pytriton
 
 ## Running example locally
 ```bash
+# You can omit it.
 cd code-examples/chat-llm
 
 # In one terminal. The CUDA_VISIBLE_DEVICES is optional.
@@ -64,7 +71,7 @@ Streamlit 是一个基于 Python 的前端框架，也是简洁地实现该 DEMO
 
 ### PyTriton Client
 
-> ✨ PyTriton 是 NVIDIA 对于 Triton Inference Server 的纯 Python 实现，用来简化 Python 环境下的模型部署。可以理解为提供模型推理的前后端配套接口即可。PyTriton 的优势我会在后续的博客中进行分析，现在你只需要继续实现下去。
+> ✨ PyTriton 是 NVIDIA 对于 Triton Inference Server 的纯 Python 实现，用来简化 Python 环境下的模型部署。可以理解为提供模型推理的前后端配套接口即可。个人还是比较看好 PyTriton 的，但是目前文档有一些不完善，社区资料也较少（因为太新了），之后会尝试多记录一些 PyTriton 的内容。PyTriton 的优势我会在后续的博客中进行分析，现在你只需要继续实现下去。
 
 
 PyTriton 中有多种可用的 `Client`，这里选择最简洁的 `ModelClient`。只需要我们传入对应的 `url` 和 `model_name` 即可构造。这里的 `url` 前缀为 `grpc://`，代表我们使用的是 `gRPC` 协议。PyTriton 支持 `HTTP` 和 `gRPC` 两种协议，但是 `gRPC` 通常更稳定。
