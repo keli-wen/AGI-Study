@@ -22,6 +22,9 @@ Example 计划会有两个版本，内容包括：
 ## Model Selection
 模型选择的是 `🐳deepseek` 的 [`llm-7b-chat`](https://huggingface.co/deepseek-ai/deepseek-llm-7b-chat)。我本地运行当前配置大约需要单卡 15GB 的显存。（个人建议 24GB 及以上）
 
+最终效果大致如下：
+
+![chat-llm-demo](chat-llm-demo.png)
 
 ## Installation
 如下为 Example 所需的依赖。欢迎大家进行补充。
