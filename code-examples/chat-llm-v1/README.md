@@ -46,7 +46,7 @@ pip install -U nvidia-pytriton
 ## Running example locally
 ```bash
 # You can omit it.
-cd code-examples/chat-llm
+cd code-examples/chat-llm-v1
 
 # In one terminal. The CUDA_VISIBLE_DEVICES is optional.
 CUDA_VISIBLE_DEVICES=7 python server.py
