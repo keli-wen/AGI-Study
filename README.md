@@ -1,4 +1,4 @@
-# 🤖AGI-Study
+# AGI-Study
 
 - [AGI-Study](#agi-study)
   - [Environment](#environment)
@@ -9,7 +9,7 @@
   - [Basic](#basic)
 
 
-我建立这个 Repo 的初衷是以 Code 指导理论学习，所以我会尽量以 Code 为主，以应用为主。
+🎯 Be a good Deep Learning Engineer.
 
 ## Environment
 
@@ -41,6 +41,7 @@
 
 - [x] `vLLM`: 介绍 `vLLM` 的使用，**以及后续的 `vLLM` 核心原理和代码的探索。**
 - [x] `TensorRT-LLM`：目前是非常简单的介绍了 `TensorRT-LLM` 的使用信息。
+- [ ] `Mixture of Depth`：关于 MoD 的最新介绍。
 - [ ] `Nvidia Triton Inference Server`：首先进行工具扫盲，然后主要从应用的角度介绍这个工具的使用。
 
 ## Demo
