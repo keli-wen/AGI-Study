@@ -1,13 +1,5 @@
 # AGI-Study
 
-- [AGI-Study](#agi-study)
-  - [Environment](#environment)
-  - [Train](#train)
-  - [Optimization](#optimization)
-  - [Inference](#inference)
-  - [Demo](#demo)
-  - [Basic](#basic)
-
 
 🎯 Be a good Deep Learning Engineer.
 
