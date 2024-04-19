@@ -1,3 +1,4 @@
+import base64
 import json
 
 import numpy as np
@@ -8,11 +9,13 @@ from pytriton.client import ModelClient
 st.title("Chat-LLM Whisper 🎵")
 # Default Frontend Related Setting.
 if "chat_counter" not in st.session_state:
+    # https://discuss.streamlit.io/t/are-there-any-ways-to-clear-file-uploader-values-without-using-streamlit-form/40903
     st.session_state["chat_counter"] = 0
 # Default Model Related Setting.
-st.session_state["MODEL-NAME"] = "deepseek-llm-7b-chat"
+st.session_state["MODEL-NAME"] = "deepseek-vl-7b-chat"
 st.session_state["URL"] = "grpc://127.0.0.1:8001"
 
+# Temporary directory to store the uploaded files.
 
 # Create the PyTriton client.
 st.session_state["client"] = ModelClient(
@@ -20,11 +23,18 @@ st.session_state["client"] = ModelClient(
 )
 
 
+def encode_image_to_base64(image):
+    """Encode the image to base64."""
+    return base64.b64encode(image.getvalue()).decode("utf-8")
+
+
 def chat_page():
     """Chat page for ChatGPT Whisper."""
     # Use `st.session_state.history_messages` to store the chat history.
     if "history_messages" not in st.session_state:
         st.session_state.history_messages = []
+    if "display_history_messages" not in st.session_state:
+        st.session_state.display_history_messages = []
 
     st.sidebar.title("🎁 More Extra Options")
     st.sidebar.divider()
@@ -36,38 +46,52 @@ def chat_page():
     )
 
     st.sidebar.markdown("### Chat with :orange[Image]")
-    image = st.sidebar.file_uploader(
+    images = st.sidebar.file_uploader(
         key=f"{st.session_state['chat_counter']}_image_uploader",
         label="Upload Image",
         type=["jpg", "png", "jpeg"],
-        accept_multiple_files=False,
+        accept_multiple_files=True,
         label_visibility="collapsed",
     )
+
+    # Convert the image to base64 which can JSON serializable.
+    base64_encoded_strs = list(map(encode_image_to_base64, images))
+
     st.sidebar.markdown("### Chat with :gray[Audio]")
     voice_return = st.sidebar.checkbox(
-        "Enable Voice Return",
+        "Enable Voice Return (Coming Soon)",
         key=f"enable_Voice_return",
+        disabled=True,
     )
 
     # Show the chat history in the front-end.
-    for message in st.session_state.history_messages:
+    for message in st.session_state.display_history_messages:
         with st.chat_message(message["role"]):
-            if "image" in message:
-                st.image(message["image"])
+            if message.get("images", None) is not None:
+                st.image(message["images"])
             st.markdown(message["content"])
 
     # Get the user's prompt. := is the walrus operator.
     if prompt := st.chat_input("Message Chat-bot..."):
         # Update the chat history with the user's prompt.
-        user_message = {"role": "user", "content": prompt}
-        if image is not None:
-            user_message["image"] = image
+        user_message = {
+            "role": "user",
+            "content": f"{'<image_placeholder>' * len(images)} {custom_instructions} {prompt}",
+            "images": base64_encoded_strs,
+        }
+        display_message = {
+            "role": "user",
+            "content": f"{prompt}",
+            "images": images,
+        }
+
         st.session_state.history_messages.append(user_message)
+        st.session_state.display_history_messages.append(display_message)
 
         # Show the user's prompt in the front-end.
         with st.chat_message("user"):
-            if image:
-                st.image(image)
+            if len(images) != 0:
+                st.image(images)
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
@@ -85,13 +109,19 @@ def chat_page():
             # Step3. Decode the response and show it in the front-end.
             response = response_dict["response"][0].decode("utf-8")
             st.markdown(response)
-            
+
             # Step4. Update the chat counter to remove the sended image.
-            st.session_state["chat_counter"] += 1
+            if len(images) != 0:
+                st.session_state["chat_counter"] += 1
 
         st.session_state.history_messages.append(
             {"role": "assistant", "content": response}
         )
+        st.session_state.display_history_messages.append(
+            {"role": "assistant", "content": response}
+        )
+
+        st.experimental_rerun()
 
 
 if __name__ == "__main__":

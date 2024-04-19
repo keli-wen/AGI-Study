@@ -1,25 +1,64 @@
+import base64
+import hashlib
 import json
 import logging
 
+import os
+import tempfile
+from io import BytesIO
+
 import numpy as np
 import torch
+
+from deepseek_vl.models import MultiModalityCausalLM, VLChatProcessor
+from deepseek_vl.utils.io import load_pil_images
 from pytriton.decorators import sample
 from pytriton.model_config import ModelConfig, Tensor
 from pytriton.triton import Triton, TritonConfig
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from transformers import AutoModelForCausalLM
 
 # Get the logger.
 logger = logging.getLogger("code-examples.chat-llm.server")
 
 # The basic process of loading model.
-model_name = "deepseek-ai/deepseek-llm-7b-chat"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = AutoModelForCausalLM.from_pretrained(
-    model_name, torch_dtype=torch.bfloat16, device_map="auto"
+model_name = "deepseek-ai/deepseek-vl-7b-chat"
+vl_chat_processor: VLChatProcessor = VLChatProcessor.from_pretrained(model_name)
+tokenizer = vl_chat_processor.tokenizer
+
+vl_gpt: MultiModalityCausalLM = AutoModelForCausalLM.from_pretrained(
+    model_name, trust_remote_code=True
 )
-model.generation_config = GenerationConfig.from_pretrained(model_name)
-model.generation_config.pad_token_id = model.generation_config.eos_token_id
+vl_gpt = vl_gpt.to(torch.bfloat16).cuda().eval()
+temporal_image_cache = tempfile.TemporaryDirectory()
+
+
+def decode_message_images(message):
+    """Decode the base64 images in the message and save them in the cache."""
+    if message.get("images", None) is not None:
+        post_images = []
+        for image in message["images"]:
+            # Decode the base64 string to get the bytes
+            image_bytes = base64.b64decode(image.encode("utf-8"))
+
+            # Create a BytesIO object from the decoded bytes
+            image = BytesIO(image_bytes)
+
+            # Use a cache to save the image and get the path.
+            # First, use hash to get the image name.
+            image_name = hashlib.md5(image_bytes).hexdigest()
+
+            # Check if the image exists in the cache otherwise save it.
+            if not os.path.exists(
+                f"{temporal_image_cache.name}/{image_name}.png"
+            ):
+                with open(
+                    f"{temporal_image_cache.name}/{image_name}.png", "wb"
+                ) as f:
+                    f.write(image_bytes)
+
+            post_images.append(f"{temporal_image_cache.name}/{image_name}.png")
+        message["images"] = post_images
+    return message
 
 
 @sample
@@ -29,18 +68,38 @@ def _infer_fn(messages: np.ndarray) -> np.ndarray:
     # e.g. [{"role": "user", "content": "Hello"}]
     history_messages = json.loads(messages.tobytes().decode("utf-8"))
 
-    # Step2. Apply the chat template and return the tensor.
-    input_tensor = tokenizer.apply_chat_template(
-        history_messages, add_generation_prompt=True, return_tensors="pt"
+    # Step2. Decode the base64 images in the message.
+    history_messages = list(map(decode_message_images, history_messages))
+    history_messages.append({"role": "Assistant", "content": ""})
+    print(history_messages)
+
+    # Step3. Load images and prepare for inputs.
+    pil_images = load_pil_images(history_messages)
+    prepare_inputs = vl_chat_processor(
+        conversations=history_messages, images=pil_images, force_batchify=True
+    ).to(vl_gpt.device)
+
+    # Step4. Run image encoder to get the image embeddings.
+    inputs_embeds = vl_gpt.prepare_inputs_embeds(**prepare_inputs)
+
+    # Step5. Run the model to get the response.
+    outputs = vl_gpt.language_model.generate(
+        inputs_embeds=inputs_embeds,
+        attention_mask=prepare_inputs.attention_mask,
+        pad_token_id=tokenizer.eos_token_id,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        max_new_tokens=512,
+        do_sample=False,
+        use_cache=True,
     )
 
-    # Step3. Generate the response and decode it.
-    outputs = model.generate(input_tensor.to(model.device), max_new_tokens=500)
+    # Step6. Return the response as np.ndarray.
     result = tokenizer.decode(
-        outputs[0][input_tensor.shape[1] :], skip_special_tokens=True
+        outputs[0].cpu().tolist(), skip_special_tokens=True
     )
 
-    # Step4. Return the response as np.ndarray.
+    logger.debug(result, type(result))
     return {"response": np.char.encode([result], "utf-8")}
 
 
