@@ -67,7 +67,7 @@ def chat_page():
     # Show the chat history in the front-end.
     for message in st.session_state.display_history_messages:
         with st.chat_message(message["role"]):
-            if message.get("images", None) is not None:
+            if "images" in message and len(message["images"]) != 0:
                 st.image(message["images"])
             st.markdown(message["content"])
 
