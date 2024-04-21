@@ -20,9 +20,11 @@
 在进行 generation 的时候，我们有时候被要求设定 temperature 的值，那么它到底有什么作用呢？
 
 通常模型的输出是一些值（logits）而不是分布（probability distribution），我们需要将其转换成分布，转换通常使用的是softmax 函数：
+
 $$
 \dfrac{\exp(z_i)}{\sum \exp(z_j)}
 $$
+
 虽然 Softmax 可以得到一个分布，但同时也有其缺点。容易扩大/缩小内部元素的差异（异化成 max / mean），如（这里是借鉴的例子）：
 
 - `[11, 12, 13]` 进行 softmax 后为 `[0.0900, 0.2447, 0.6652]`， 这导致最终采样后的结果**不够丰富**。
@@ -30,9 +32,11 @@ $$
 - `[0.01, 0.02, 0.03]` 进行 softmax 后为 `[0.3300, 0.3333, 0.3367]`，这将导致最终采样方法是在随机采样，**生成不合理的序列**。
 
 Temperature $T$ 便是用来解决这个问题，用于调节 softmax ，让其分布进一步符合我们的预期。
+
 $$
 \dfrac{\exp(z_i / T)}{\sum \exp(z_j / T)}
 $$
+
 如图所示，我们能快速的理解 T 对于 Softmax 分布的影响。
 
 ![img](./assets/temperature.gif)
@@ -82,7 +86,7 @@ def generate(
 
 假设我们有 $N$ 个 tokens：
 
-1. 第一步，$N$ 个 prompt tokens 同时输入到模型，并得到 $N$ 个 distribution（用于预测下一个token的），仅最后一个为我们需要的分布。（`图 Step1 右侧`）
+1. 第一步， $N$ 个 prompt tokens 同时输入到模型，并得到 $N$ 个 distribution（用于预测下一个token的），仅最后一个为我们需要的分布。（`图 Step1 右侧`）
 2. 同时，第一次输入到模型中的 prompt tokens 的计算结果会被缓存到 kv cache 中（`图 Step2 左侧灰色块`），因此之后的自回归采样只需要输入上一次预测得到的 token。
 3. 重复这个过程，直到得到**结束 token**或者超过模型设定的**最大序列长度**。
 
