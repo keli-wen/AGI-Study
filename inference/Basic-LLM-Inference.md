@@ -39,7 +39,9 @@ $$
 
 如图所示，该动图方便我们快速地理解 T 对于 Softmax 分布的影响。
 
+<div align=center>
 <img src="./assets/temperature.gif" alt="img" />
+</div>
 
 - 当 $T$ 越大，分布会越趋近于 uniform distribution，采样结果的随机性越大。
 - 当 $T$ 越小，分布会越趋近于 one-point distribution，采样结果越趋近于一致。
@@ -98,7 +100,7 @@ def generate(
 
 ### 2.3. Goal2: How to batch inference?
 
-在 Goal1 中我们已经理解了没有 batch 情况下的自回归采样。接下来我们尝试回答第二个也是最后一个问题：**LLM 是如何处理不定长的 batch inference？**同样需要注意的是，我们这里讲解的是 basic inference，所以是最简单的情况，当前各种集成库中肯定做了各式的优化（我们会在后续的文章中尝试一步步解构）。
+在 Goal1 中我们已经理解了没有 batch 情况下的自回归采样。接下来我们尝试回答第二个也是最后一个问题：**LLM 是如何处理不定长的 batch inference？** 同样需要注意的是，我们这里讲解的是 basic inference，所以是最简单的情况，当前各种集成库中肯定做了各式的优化（我们会在后续的文章中尝试一步步解构）。
 
 假设输入的 `prompt_tokens` 的 batch 大小为 `B`，每个序列长度都不一定相等。
 
