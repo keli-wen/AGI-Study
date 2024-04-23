@@ -5,14 +5,14 @@
 
 ## Code-Examples
 
-- [x] `chat-llm-v1`：基于 `PyTriton`，`Streamlit` 和 `DeepSeek` 制作的最简化 Chat Project。
+- [x] [`chat-llm-v1`](https://github.com/keli-wen/AGI-Study/tree/master/code-examples/chat-llm-v1)：基于 `PyTriton`，`Streamlit` 和 `DeepSeek` 制作的最简化 Chat Project。
 - [ ] `chat-llm-v2`：基于 `chat-llm-v1` 制作的 `vision language` 版本，并优化了多模型选择，dynamic batching 和 streaming output 等新特性。（施工中）
 
 ## Environment
 
 > 这部分主要介绍 DL 环境配置相关的内容。
 
-- [x] **CUDA** Related Env Config：介绍 GPU Driver Version，Cuda Toolkit Version 的更新。后续将包括多 Cuda 版本管理等。
+- [x] [**CUDA** Related Env Config](https://github.com/keli-wen/AGI-Study/blob/master/env/cuda-related.md)：介绍 GPU Driver Version，Cuda Toolkit Version 的更新。包括多 Cuda 版本管理等。
 
 ## Train
 
