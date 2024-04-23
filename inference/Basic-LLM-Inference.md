@@ -54,7 +54,9 @@ Top-p sampling 核心思想是选择**累积概率超过某个阈值 p 的最小
 
 用一个图来形象的解释整个流程（图右），即先选择出 nucleus 集合后，重新进行概率的归一化再进行采样。如果你还是不太理解 Top-p sampling 可以参考 `llama2` 中的 [`sample_top_p`函数实现](https://github.com/meta-llama/llama/blob/main/llama/generation.py#L398-L421)。
 
+<div align=center>
 <img src="./assets/Process-of-top-k-and-top-p-sampling.png" alt="Process-of-top-k-and-top-p-sampling" />
+</div>
 
 ## 2. Learn by `llama` code 
 
