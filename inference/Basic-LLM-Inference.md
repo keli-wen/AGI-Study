@@ -2,42 +2,42 @@
 
 ⏰ Read : `35min`
 
-> 惭愧，在我阅读很多其他 LLM 相关的文章时，发现我对 LLM 的 Inference/Sampling 的过程不够了解。基础不牢，地动山摇。所以我尝试首先理解基础的 LLM Inference Pipeline。
+> 惭愧，在我阅读很多其他 LLM 相关的文章时，发现我对 LLM 的 Inference/Sampling 的过程不够了解。基础不牢，地动山摇。所以我尝试先理解基础的 LLM Inference Pipeline。
 
 ## 0. Goal
 
-本文旨在回答之后的两个问题：
+本文旨在回答两个问题，所有的 Inference 操作主要基于 `meta-llama` 代码进行交叉讲解。
 
 - **Question1：输入 N 个 tokens （prompt），LLM 是如何得到下一个 token？又是如何进行自回归采样（Auto- regressive Sampling）呢？**
 - **Question2：LLM 是如何处理不定长的 batch inference？**
 
 ## 1. Pre-knowledge
 
-> 后续 Inference/Generation 涉及到的最基础的元知识。【📖预计：5min】
+> 该章节介绍 Generation 将涉及到的元知识。【📖预计：5min】
 
 ### 1.1. Temperature
 
-在进行 generation 的时候，我们有时候被要求设定 temperature 的值，那么它到底有什么作用呢？
+在进行 generation 前，有时模型要求给定 temperature 的值，那么它是什么？又有什么作用呢？
 
-通常模型的输出是一些值（logits）而不是分布（probability distribution），我们需要将其转换成分布，转换通常使用的是softmax 函数：
+通常模型的输出是一些值（logits）而不是分布（probability distribution），我们需要将其转换成分布，转换通常使用的是 Softmax 函数：
 
 $$
 \dfrac{\exp(z_i)}{\sum \exp(z_j)}
 $$
 
-虽然 Softmax 可以得到一个分布，但同时也有其缺点。容易扩大/缩小内部元素的差异（异化成 max / mean），如（这里是借鉴的例子）：
+虽然 Softmax 可以得到一个分布，但同时也有其缺点。容易扩大/缩小内部元素的差异（退化成 max / mean），如（这里是借鉴的例子）：
 
-- `[11, 12, 13]` 进行 softmax 后为 `[0.0900, 0.2447, 0.6652]`， 这导致最终采样后的结果**不够丰富**。
+- `[11, 12, 13]` 进行 Softmax 后为 `[0.0900, 0.2447, 0.6652]`， 这导致最终采样后的结果**不够丰富**。
 
-- `[0.01, 0.02, 0.03]` 进行 softmax 后为 `[0.3300, 0.3333, 0.3367]`，这将导致最终采样方法是在随机采样，**生成不合理的序列**。
+- `[0.01, 0.02, 0.03]` 进行 Softmax 后为 `[0.3300, 0.3333, 0.3367]`，这将导致最终采样方法是在随机采样，**生成不合理的序列**。
 
-Temperature $T$ 便是用来解决这个问题，用于调节 softmax ，让其分布进一步符合我们的预期。
+Temperature $T$ 便是用来解决这个问题，用于调节 Softmax ，让其分布进一步符合我们的预期。
 
 $$
 \dfrac{\exp(z_i / T)}{\sum \exp(z_j / T)}
 $$
 
-如图所示，我们能快速的理解 T 对于 Softmax 分布的影响。
+如图所示，该动图方便我们快速地理解 T 对于 Softmax 分布的影响。
 
 ![img](./assets/temperature.gif)
 
@@ -94,7 +94,7 @@ def generate(
 
 ### 2.3. Goal2: How to batch inference?
 
-[[TODO]]
+![batch-inference](./assets/batch-inference.gif)
 
 ## References
 
