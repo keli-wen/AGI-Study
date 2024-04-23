@@ -1,6 +1,6 @@
 # Basic LLM Inference/Generation
 
-⏰ Read : `40min`
+⏰ Read : `30min`
 
 > 惭愧，在我阅读很多其他 LLM 相关的文章时，发现我对 LLM 的 Inference/Sampling 的过程不够了解。基础不牢，地动山摇。所以我尝试先理解基础的 LLM Inference Pipeline。
 
@@ -48,7 +48,7 @@ $$
 
 所以为什么叫 temperature 呢？我们知道：温度越高，布朗运动越剧烈；同理，temperature 越高，采样得到的结果越随机。
 
-### Top-p/Nucleus Sampling
+### 1.2. Top-p/Nucleus Sampling
 
 Top-p sampling 核心思想是选择**累积概率超过某个阈值 p 的最小集合，然后从这个集合中随机选择下一个词**。这个集合被称为 `nucleus`，即核心，这也是 `nucleus sampling` 名称的来源。
 
