@@ -122,6 +122,8 @@ def generate(
 
 <img src="./assets/batch-inference.gif" alt="batch-inference" />
 
+> Goal 1/2 中的两张图片可能对你了解 llm-inference 很有帮助。由于我花了挺长时间制作这个图片和动图，为了节约大家的时间（也不想打水印），我将可视化 PPT 开源到了 [`visualization/Basic-LLM-Inference.pptx`](https://github.com/keli-wen/AGI-Study/blob/master/visualization/Basic-LLM-Inference.pptx) 文件中。
+
 通过理解 LLM 是如何进行 batch inference 后，我们也能发现该范式存在大量的冗余计算和性能浪费，存在很大的优化空间。这也是后续 Continuous batching 推出的必然原因。
 
 ## References
