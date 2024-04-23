@@ -52,7 +52,7 @@ $$
 
 Top-p sampling 核心思想是选择**累积概率超过某个阈值 p 的最小集合，然后从这个集合中随机选择下一个词**。这个集合被称为 `nucleus`，即核心，这也是 `nucleus sampling` 名称的来源。
 
-用一个图来形象的解释整个流程（图右），即先选择出 nucleus 集合后，重新进行概率的归一化再进行采样。如果你还是不太理解 Top-p sampling 可以参考 `llama2` 中的 [`sample_top_p`函数实现](https://github.com/meta-llama/llama/blob/main/llama/generation.py#L398-L421)。
+用一个图来形象的解释整个流程（图右），即先选择出 nucleus 集合后，重新进行概率的归一化再进行采样。如果你还是不太理解 Top-p sampling 可以参考 `llama2` 中的 [`sample_top_p`函数实现](https://github.com/keli-wen/meta-llama2-explain/blob/main/llama/generation_cn_comment.py#L448-L490)（这里给出了中文注释后的版本）。
 
 <div align=center>
 <img src="./assets/Process-of-top-k-and-top-p-sampling.png" alt="Process-of-top-k-and-top-p-sampling" />
@@ -122,12 +122,13 @@ def generate(
 
 <img src="./assets/batch-inference.gif" alt="batch-inference" />
 
-通过理解 LLM 是如何进行 batch inference 后，我们也能发现该范式存在大量的冗余计算和性能浪费，有很大的优化空间。这也是后续 Continuous batching 推出的前提。
+通过理解 LLM 是如何进行 batch inference 后，我们也能发现该范式存在大量的冗余计算和性能浪费，存在很大的优化空间。这也是后续 Continuous batching 推出的必然原因。
 
 ## References
 
 - [Blog: LLM Inference串讲](https://xv44586.github.io/2023/03/10/llm-inf/index.html)
 - [Github Repo: meta-llama/llama](https://github.com/meta-llama/llama)
+- [Github Repo: keli-wen/meta-llama2-explain](https://github.com/keli-wen/meta-llama2-explain)
 - [TORCH.MULTINOMIAL](https://pytorch.org/docs/stable/generated/torch.multinomial.html#torch.multinomial)
 - [Blog: 2023年的深度学习入门指南(19) - LLaMA 2源码解析](https://juejin.cn/post/7259738325031944247)
 
