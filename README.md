@@ -18,7 +18,7 @@
 
 > 这部分主要介绍当前 LLM 中常用的 Training 框架以及相关知识点。
 
-- [ ] `PYTORCH LIGHTNING` 入门介绍
+- [ ] `PYTORCH LIGHTNING` 入门介绍（低优先级）
 - [ ] DeepSpeed 介绍：
   - [ ] DeepSpeed -- ZeRO 原理介绍（见知乎，待搬运）。
   - [ ] DeepSpeed 实战（环境配置，Example）（TODO，Low Priority）
@@ -43,6 +43,5 @@
 > 这部分主要介绍 DEMO 制作相关的经验。
 
 - [x] `FastAPI`: 介绍 `FastAPI` 的基本信息，以及它如何应用在 LLM 相关的 DEMO 原型中。
-
 - [ ] `Streamlit`：介绍如何 `Streamlit` 如何使用，并定制化自己的 DEMO 前端。
 
