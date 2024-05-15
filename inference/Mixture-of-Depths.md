@@ -8,11 +8,11 @@
 >
 > **A：**TODO
 
-## Introduction
+## 1. Introduction
 
 
 
-## 2 Implementing Mixture-of-Depths Transformers
+## 2. Implementing Mixture-of-Depths Transformers
 
 我们整体的设计策略如下：
 
@@ -54,23 +54,40 @@
 
 ### 2.3 Routing schemes
 
-接下来我们要分析使用哪种路由方案。显然，最基础的方案就是在 tokens 中随机选择并丢弃（类似于 `dropout`）。文章使用这种方式作为对比来展示朴素的路由实现会导致性能相较于标准 transformer 有急剧的下降。
+**如何路由 token 决定了该方法的性能**。举一个不恰当的例子，假设有一位学生正在学习英语，老师每次只是随机地从句子中挑选几个词来教学。如果我们考虑这样的一个句子：`She is a very good teacher`，如果老师随机挑选词汇，比如只教授 `she, a, good`，那么学生最终可能会对句子的真实含义产生误解，或者根本无法理解完整的语义结构。（好吧，我承认这个例子不是很恰当，大家意会即可）
 
-我们假设基于学习的路由是可行的。**从直觉出发**，网络应该能学到哪些 tokens 会比其他 tokens 需要更多或更少的处理。如果 Transformer 确实做了很多无用的计算，那么这就转化成了一个经验问题，也就是我们减少每个块容量的激进程度应该是多少，我们能允许多少 tokens 跳过块计算（残差链接）。
+最基础的 routing 方案就是在 tokens 中**随机选择并丢弃**（类似于 `dropout`）。后续实验将以该方式作为对比，展示过分简单的 routing 实现会导致性能急剧下降（相较于标准 transformer ）。
 
-即使确定了使用基于学习的路由，仍然存在两种不同的范式：token-choice（token 选择）和 expert-choice（专家选择）。
+与随机丢弃对应的是可学习的路由（learnable routing）。我们首先假设 learnable routing 是可行的，即假定网络应该能学到哪些 tokens 需要更多或更少的处理。如果 Transformer 确实做了很多无用的计算，那么问题便从 **“Transformer 是否存在冗余计算”** 转化为 **“Transformer 冗余了多少计算量”**，这是一个经验问题，我们通过实验来确定减少 Transformer 计算容量的激进程度，以及我们最多能允许多少 tokens 在每层 block 中不被计算。
 
-在 token-choice 中，一个路由器为每个 token 生成到所有可能的计算路径上的概率分布（例如，在 MoE Transformer 中选择经过哪个 expert)。然后，tokens 会被发送到概率最高的那条路径。我们可以通过辅助 loss 确保所有 tokens 不会被 route 到同一路径上。但是 token-choice 可能会出现负载均衡问题，因为可能绝大部分 tokens 只选择了少数到计算路径。
+假设完毕开始实践，目前有两种主流可学习的路由架构（见图），token-choice（自选）和 expert-choice（反选）。
 
-![Figure1](./assets/MoD-Figure1.png)
+在 token-choice 中，会训练一个 router 为每个 token 生成到所有可能的**（计算）路径**上的概率分布（例如，在 MoE 中选择 token 经过哪个 expert)。然后，tokens 会被发送到概率最高的那条路径。并且为避免所有的 tokens 选择相同的路径，可以引入辅助 loss。但是，**即使引入辅助 loss，token-choice 路由架构仍可能因为大部分 token 仅选择趋同的少部分路径，从而出现负载均衡问题。**
 
-图片难懂的地方在于右图如何理解，应该是按行，从下往上看。MoD 的优势是，tokens 可以在不同 layer 中有选择的被处理（尽管总共被处理的次数不多）。而在使用了 Early-Exit Conditional Computation 技术的 Transformer 中，tokens 要么被连续处理，要么永远不会再被处理，在普通的 Transformer 中 tokens 则会一直被处理。
+在 expert-choice 中，每条路径通过 route 挑选 Top-k 个 tokens。这种架构保证不会出现负载均衡问题，因为每个路径分配且仅分配 $k$ 个 tokens。但是，这种架构同样存在局限，因为有些 tokens 可能出现在所有路径的 Top-k 集合从而被过度使用，而有些 token 则不出现在任何路径中。
+
+> 思考接下来几个小问题会对理解该小节更有帮助：
+>
+> - 在 token-choice 架构中，**如何保证计算容量的准确利用**？每个 token 都存在一个概率分布并将选择一条路径，由于任意路径容量有限，tokens 之间存在竞争，如何保证计算容量被充分的利用呢？
+> - 对于任意一条路径，如果选择该路径的 tokens 超过它的容量，我们如何确定哪些 tokens 要被丢弃呢？
+
+![Figure1](./assets/MoD-Figure2.png)
+
+***Figure2.Explanation*** 当使用 token-choice routing 架构时（左图），tokens 会选择它们倾向的路径。如果一个路径中的 tokens 超过了其容量，那么超过容量的 tokens 将被丢弃（例如图左中的 Expert1 的容量为 2，紫色的 token 便无法再选择 Expert1 而被丢弃）。同时论文中提到，当选择某条计算路径的 token 数超过其容量时，**由底层实现决定具体是哪些 token 被丢弃**。例如，优先级可能按先来后到决定（序列中的先后关系或者是**batch 中的先后关系**）。当使用 expert-choice routing 架构时（中间图），我们则能依据 tokens 的 router 权重和 top-k 为每个路径**选择恰好 $k$ 个 tokens**。没有被任何路径选择的 tokens 将被丢弃（橘色）同时有些 tokens 会被重复选择（黄色）。在 MoD 中，我们将采用 expert-choice routing 架构（右图）。在 MoD 中，仅有一条计算路径（即参与 Transformer Block 的计算），那么没有被选择的 tokens 会被直接残差连接，从而减少前向传播中 FLOPs 的消耗。
+
+MoD 选择 expert-choice routing 架构基于以下几个原因：
+
+- 不需要引入额外的辅助损失来解决可能的负载均衡问题。
+- top-k 操作暗含了相对大小的比较，router 可以通过比较所有 tokens 的权重来选择它认为最需要计算的 tokens。如果 router 能得到（学习到）正确权重，那么该架构可以保证最重要的 tokens 一定位于 top-k 集合中，而 token-choice 架构则无法做到这一点。因为每个 token 的选择仅取决于权重，无法进行相对大小的比较。对于我们这个特定的设计，实际上另外一条计算路径是**空操作**，所以确保重要的 tokens 参与计算至关重要。所以 top-k 操作更能满足这个需求。
+- 最后，**参考前文我提出的小问题，token-choice 架构难以保证使用准确的计算量**，可能会出现过处理和欠处理的情况，这是因为不同 tokens 选择路径的情况，参与计算的 tokens 数可能不同，计算量自然也不同，并且还需要一些额外的优先级设计来判断抛弃哪些多余的 tokens，**因此 token-choice 的实现会不必要的复杂**。反观 expert-choice 可以**仅用一个 top-k 操作划分出两个不相交的结合，并且能保证计算量的精准控制**。
+
+### 2.4 Routing Implementation
+
+
 
 ### 2.5 Sampling
 
 > 这部分是我开始困惑最久的内容。我完全无法理解为什么存在这个限制："While expert-choice routing has a number of advantages, it has one distinct problem: the top-$k$ operation is non-causal. **This means that whether a given token’s routing weight is among the top-$k$​ for the sequence depends on the values of the routing weights for tokens that come after it, which we don’t have access to when autoregressively sampling."**
-
-
 
 ### 2.6 Training methods
 
@@ -122,7 +139,7 @@ Figure3 右图便是在解释这种可能。我们选择了 MoD Model#3 （大�
 
 ## 4. Discussion
 
-> Need to refine
+> Need refinement.
 
 学习型路由机制有时是非因果的;也就是说,在确定给定标记的路由决策时,会使用关于未来的信息。这通常适用于 top-k 路由机制,因为它们无需辅助平衡损失。然而,top-k 路由机制在后训练自回归采样过程中存在困难,因为在那里无法使用关于未来标记标识的信息来确定路由决策。在这项工作中,我们展示了可以在训练期间成功使用 top-k 路由方案,但在后续的自回归采样中不需要它。一个简单的辅助分类器或对路由器的辅助损失就足以学习 top-k 路由决策,以便在自回归采样期间模仿 top-k 决策,同时最小化或不降低性能。
 
@@ -136,3 +153,4 @@ Figure3 右图便是在解释这种可能。我们选择了 MoD Model#3 （大�
 
 ## Reference
 
+- [Blog: FLOPS vs FLOPs](https://blog.csdn.net/Caesar6666/article/details/125102569)
