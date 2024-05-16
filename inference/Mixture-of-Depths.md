@@ -91,13 +91,15 @@ MoD 选择 expert-choice routing 架构基于以下几个原因：
 
 tokens 经过 router 得到对应的权重，然后结合 top-k 选择对应的 tokens 集合作为 Transformer block 的输入。
 
-假设，对于给定的 layer $l$ ，我们有长度为 $S$ 的序列中所有 token 的 embedding， 即 $X^{l} = \{ x_{i}^{l} | i \text{ is an integer, } 1\le i \le S\}$ 。那么对于给定的 token embedding 其 router 权重是一个通过线性层计算得到的标量（Scalar）值：$r_{i}^{l} = w_{\theta}^{T} x_{i}^{l}$​ 。
+假设，对于给定的 layer $l$ ，我们有长度为 $S$ 的序列中所有 token 的 embedding， 即 $X^{l} = \{ x_{i}^{l} | i \text{ is an integer, } 1\le i \le S\}$ 。那么对于给定的 token embedding 其 router 权重是一个通过线性层计算得到的标量（Scalar）值： $r_{i}^{l} = w_\theta^{T} x_{i}^{l}$​ 。
 
 除了使用 router 权重进行 top-k 集合的选择，**我们的目标是使用 router 权重来决定每个 token 通过 transformer block 的计算输出**。假设 $P_{\beta}(R^l)$ 表示 router 权重集合 $R^l$ 中的 $\beta$  分位数，其中 $\beta = 1 - \frac{C}{S}$ 且 $C$ 是用户定义好的每个 batch 中的计算容量（计算容量就是用来定义将会被处理的 tokens 数，显然我们需要保证 $C < S$ ） 。对于给定的 token，transformer block 输出为：
+
 $$
 x_i^{l+1}= \begin{cases}r_i^l f_i\left(\tilde{X}^l\right)+x_i^l, & \text { if } r_i^l>P_\beta\left(R^l\right) \\ x_i^l, & \text { if } r_i^l<P_\beta\left(R^l\right)\end{cases}
 $$
-其中 $\widetilde{X}^l$ 是指对应 router 权值为 top-k 的 tokens embedding 集合（即所有满足 $r_i^l > P_\beta(R^l)$ 的 tokens embedding），$f$ 则代表 transformer block 中的算子（Self-Attention 和 MLP）。你会发现 tokens $i$ $x_{i}^{l+1}$ 的结果同时受到其他 tokens $x_{i\neq j}^{l}$ 的影响， 这是因为 self-attention 操作的存在。由于输入到 $f$ 的 tokens 数量更少（因为 $\widetilde{X}^l$ 的集合大小为 $C$ 且 $C < S$​​ ），从而降低了用于 Self-Attention 和 MLP 的计算开销，因此 MoD Transformer 仅需要比标准 Transformer 更少的计算量。
+
+其中 $\widetilde{X}^l$ 是指对应 router 权值为 top-k 的 tokens embedding 集合（即所有满足 $r_i^l > P_\beta(R^l)$ 的 tokens embedding）， $f$ 则代表 transformer block 中的算子（Self-Attention 和 MLP）。你会发现 tokens $i$ 的结果 $x_i^{l+1}$ 同时受到其他 tokens $x_{i\neq j}^{l}$ 的影响， 这是因为 self-attention 操作的存在。由于输入到 $f$ 的 tokens 数量更少（因为 $\widetilde{X}^l$ 的集合大小为 $C$ 且 $C < S$ ），从而降低了用于 Self-Attention 和 MLP 的计算开销，因此 MoD Transformer 仅需要比标准 Transformer 更少的计算量。
 
 你还会发现，我们会将 $f$ 的输出乘上 router 的权重 $r_i^l$ 。**这样会将 router 权重置于梯度路径上，从而在语言建模的过程中受到梯度下降的影响**（也就是 train router）。Google 也说他们尝试了**不同的版本的实现**，即在残差链接的计算路径中也考虑引入 router 权重的影响（可以理解为 $x_i^{l+1} = r_i^l x_i^l$ ）但是后面发现，目前的版本已经能取得更好的效果， 并且实现起来更为简单。
 
