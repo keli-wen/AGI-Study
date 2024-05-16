@@ -4,9 +4,9 @@
 
 本文是我拜读的第一篇 Conditional Computation 领域的 paper。我会尽量深入，保证知其所以然，任何可能存在困惑的地方我都尝试在一篇文章内解决。因为我本人也是小白，有什么理解上的问题欢迎大家指正。
 
-> **Q：Why name `Depths`?**
+> **Q ：Why name `Depths`?**
 >
-> **A：**TODO
+> **A** ：TODO
 
 ## 1. Introduction
 
@@ -62,7 +62,7 @@
 
 假设完毕开始实践，目前有两种主流可学习的路由架构（见图），token-choice（自选）和 expert-choice（反选）。
 
-在 token-choice 中，会训练一个 router 为每个 token 生成到所有可能的**（计算）路径**上的概率分布（例如，在 MoE 中选择 token 经过哪个 expert)。然后，tokens 会被发送到概率最高的那条路径。并且为避免所有的 tokens 选择相同的路径，可以引入辅助 loss。但是，**即使引入辅助 loss，token-choice 路由架构仍可能因为大部分 token 仅选择趋同的少部分路径，从而出现负载均衡问题。**
+在 token-choice 中，会训练一个 router 为每个 token 生成到所有可能的 **（计算）路径** 上的概率分布（例如，在 MoE 中选择 token 经过哪个 expert)。然后，tokens 会被发送到概率最高的那条路径。并且为避免所有的 tokens 选择相同的路径，可以引入辅助 loss。但是，**即使引入辅助 loss，token-choice 路由架构仍可能因为大部分 token 仅选择趋同的少部分路径，从而出现负载均衡问题。**
 
 在 expert-choice 中，每条路径通过 route 挑选 Top-k 个 tokens。这种架构保证不会出现负载均衡问题，因为每个路径分配且仅分配 $k$ 个 tokens。但是，这种架构同样存在局限，因为有些 tokens 可能出现在所有路径的 Top-k 集合从而被过度使用，而有些 token 则不出现在任何路径中。
 
