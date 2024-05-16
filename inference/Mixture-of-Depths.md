@@ -96,7 +96,7 @@ tokens 经过 router 得到对应的权重，然后结合 top-k 选择对应的 
 除了使用 router 权重进行 top-k 集合的选择，**我们的目标是使用 router 权重来决定每个 token 通过 transformer block 的计算输出**。假设 $P_{\beta}(R^l)$ 表示 router 权重集合 $R^l$ 中的 $\beta$  分位数，其中 $\beta = 1 - \frac{C}{S}$ 且 $C$ 是用户定义好的每个 batch 中的计算容量（计算容量就是用来定义将会被处理的 tokens 数，显然我们需要保证 $C < S$ ） 。对于给定的 token，transformer block 输出为：
 
 $$
-x_i^{l+1}= \begin{cases}r_i^l f_i\left(\tilde{X}^l\right)+x_i^l, & \text { if } r_i^l>P_\beta\left(R^l\right) \\ x_i^l, & \text { if } r_i^l<P_\beta\left(R^l\right)\end{cases}
+x_i^{l+1}= \begin{cases}  r_i^l f_i (\tilde{X}^l)+x_i^l, & \text{ if } r_i^l>P_\beta (R^l) \\\\ x_i^l, & \text{ if } r_i^l < P_\beta ( R^l ) \end{cases}
 $$
 
 其中 $\widetilde{X}^l$ 是指对应 router 权值为 top-k 的 tokens embedding 集合（即所有满足 $r_i^l > P_\beta(R^l)$ 的 tokens embedding）， $f$ 则代表 transformer block 中的算子（Self-Attention 和 MLP）。你会发现 tokens $i$ 的结果 $x_i^{l+1}$ 同时受到其他 tokens $x_{i\neq j}^{l}$ 的影响， 这是因为 self-attention 操作的存在。由于输入到 $f$ 的 tokens 数量更少（因为 $\widetilde{X}^l$ 的集合大小为 $C$ 且 $C < S$ ），从而降低了用于 Self-Attention 和 MLP 的计算开销，因此 MoD Transformer 仅需要比标准 Transformer 更少的计算量。
