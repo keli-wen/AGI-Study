@@ -22,7 +22,7 @@
 
 ### 2.1 Defining a compute budget
 
-为了在每次前向传播控制总的计算预算，我们需要利用容量这个概念。**容量（capacity）**定义了每次输入中参与计算的总 tokens 数量。例如，假设在普通的 transformer 中，所有 batch 中所有序列总参与计算的 tokens 数则可以被定义为容量 $T$。在使用了 Mixture of Experts 的 transformer 中，每个专家 MLP 的容量是小于 $T$​，但是由于每个块存在多个专家，所以 MoE 的总计算量与普通 transformer 是接近等价的。
+为了在每次前向传播控制总的计算预算，我们需要利用容量这个概念。**容量（capacity）** 定义了每次输入中参与计算的总 tokens 数量。例如，假设在普通的 transformer 中，所有 batch 中所有序列总参与计算的 tokens 数则可以被定义为容量 $T$。在使用了 Mixture of Experts 的 transformer 中，每个专家 MLP 的容量是小于 $T$​，但是由于每个块存在多个专家，所以 MoE 的总计算量与普通 transformer 是接近等价的。
 
 > 这里有两个容易混淆的概念，分别是：**容量**和计算预算。
 >
@@ -46,7 +46,7 @@
 - 通过 self-attention 和 MLP blocks 进行计算。
 - 残差链接。
 
-如果我们将路径 (1) 的容量设置为小于 $T$（序列和 batch 中的总 tokens 数）的任何值，那么每次前向传递的总 FLOP 数将少于标准 transformer。例如，如果我们将块的容量设置为 $\dfrac{T}{2}$ (即与标准 transformer 相比只有一半的标记数)，那么在self-attention 过程中的 query 与 key 矩阵乘法将只需要普通 transformer 的 $25$% 的 FLOP 计算量（$\dfrac{T^2}{4}$ 与 $T^2$​​)。类似的计算可以确定 MLP 对应的 FLOP 减少量。
+如果我们将路径 (1) 的容量设置为小于 $T$（序列和 batch 中的总 tokens 数）的任何值，那么每次前向传递的总 FLOP 数将少于标准 transformer。例如，如果我们将块的容量设置为 $\dfrac{T}{2}$ （即与标准 transformer 相比只有一半的标记数），那么在self-attention 过程中的 query 与 key 矩阵乘法将只需要普通 transformer 的 $25$% 的 FLOP 计算量（ $\dfrac{T^2}{4}$ 与 $T^2$ ​​)。类似的计算可以确定 MLP 对应的 FLOP 减少量。
 
 从直观上来说，随着我们不断缩小块容量，每次前向传递的总 FLOP 数会减少（并且完成 forward 所需的时间也会减少）。但是，下游的性能也会受到我们缩小块容量的激进程度的影响，以及我们实现的路由算法的影响。
 
@@ -83,7 +83,23 @@ MoD 选择 expert-choice routing 架构基于以下几个原因：
 
 ### 2.4 Routing Implementation
 
+在进行 Routing 架构实现前，可以简单的回顾一下 routing 的流程。简单流程示意：
 
+```
+(tokens) - router -> (tokens router weight) - TopK -> (top-k tokens router weight) - SelfAttention, MLP -> (output)
+```
+
+tokens 经过 router 得到对应的权重，然后结合 top-k 选择对应的 tokens 集合作为 Transformer block 的输入。
+
+假设，对于给定的 layer $l$ ，我们有长度为 $S$ 的序列中所有 token 的 embedding， 即 $X^{l} = \{ x_{i}^{l} | i \text{ is an integer, } 1\le i \le S\}$ 。那么对于给定的 token embedding 其 router 权重是一个通过线性层计算得到的标量（Scalar）值：$r_{i}^{l} = w_{\theta}^{T} x_{i}^{l}$​ 。
+
+除了使用 router 权重进行 top-k 集合的选择，**我们的目标是使用 router 权重来决定每个 token 通过 transformer block 的计算输出**。假设 $P_{\beta}(R^l)$ 表示 router 权重集合 $R^l$ 中的 $\beta$  分位数，其中 $\beta = 1 - \frac{C}{S}$ 且 $C$ 是用户定义好的每个 batch 中的计算容量（计算容量就是用来定义将会被处理的 tokens 数，显然我们需要保证 $C < S$ ） 。对于给定的 token，transformer block 输出为：
+$$
+x_i^{l+1}= \begin{cases}r_i^l f_i\left(\tilde{X}^l\right)+x_i^l, & \text { if } r_i^l>P_\beta\left(R^l\right) \\ x_i^l, & \text { if } r_i^l<P_\beta\left(R^l\right)\end{cases}
+$$
+其中 $\widetilde{X}^l$ 是指对应 router 权值为 top-k 的 tokens embedding 集合（即所有满足 $r_i^l > P_\beta(R^l)$ 的 tokens embedding），$f$ 则代表 transformer block 中的算子（Self-Attention 和 MLP）。你会发现 tokens $i$ $x_{i}^{l+1}$ 的结果同时受到其他 tokens $x_{i\neq j}^{l}$ 的影响， 这是因为 self-attention 操作的存在。由于输入到 $f$ 的 tokens 数量更少（因为 $\widetilde{X}^l$ 的集合大小为 $C$ 且 $C < S$​​ ），从而降低了用于 Self-Attention 和 MLP 的计算开销，因此 MoD Transformer 仅需要比标准 Transformer 更少的计算量。
+
+你还会发现，我们会将 $f$ 的输出乘上 router 的权重 $r_i^l$ 。**这样会将 router 权重置于梯度路径上，从而在语言建模的过程中受到梯度下降的影响**（也就是 train router）。Google 也说他们尝试了**不同的版本的实现**，即在残差链接的计算路径中也考虑引入 router 权重的影响（可以理解为 $x_i^{l+1} = r_i^l x_i^l$ ）但是后面发现，目前的版本已经能取得更好的效果， 并且实现起来更为简单。
 
 ### 2.5 Sampling
 
