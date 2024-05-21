@@ -8,6 +8,14 @@
 >
 > **A** ：TODO
 
+## 0. Abstract
+
+基于 Transformer 的语言模型通常会将 FLOPs (运算量) 均匀分配给整个输入序列。然而，Mixutre-of-Depths 证明了 Transformer 可以学会动态地将 FLOPs(或计算资源) 分配给序列中的**特定位置**，从而可以在不同深度（不同 Layer）上优化序列的计算资源分配。
+
+我们的方法通过限制可参与自注意力 (self-attention) 和 MLP 计算的最大 token 数量 $k$ 来强制实现总计算量的限制。需要处理的 token 由使用 top-k 的 router 架构来确定。与其他的条件计算技术不同，由于 $k$ 是预先定义的，这种简单的程序使用了具有已知 tensor 大小的静态计算图。然而，由于具体参与计算的 $k$ 个 token 是动态决定的，该方法可以在时间和模型深度维度上**非均匀地分配** FLOPs。因此，计算消耗在总量上是可预测的，但在 token 级别上是动态分配的和与上下文敏感的。
+
+经过这种方式训练的模型不仅能动态地分配计算资源，还能高效地进行分配。与 baseline 相比，这些模型在等效的 FLOPs 和训练时间下达到了相同的性能，但每次前向传播所需的 FLOPs 只是 baseline 的一小部分，并且在训练后采样过程中速度可提高 50% 以上。
+
 ## 1. Introduction
 
 
@@ -105,11 +113,50 @@ $$
 
 ### 2.5 Sampling
 
-> 这部分是我开始困惑最久的内容。我完全无法理解为什么存在这个限制："While expert-choice routing has a number of advantages, it has one distinct problem: the top-$k$ operation is non-causal. **This means that whether a given token’s routing weight is among the top-$k$​ for the sequence depends on the values of the routing weights for tokens that come after it, which we don’t have access to when autoregressively sampling."**
+虽然 expert-choice 架构有许多优势，但是它存在一个显著问题：**top-k 操作是没有因果关系的**。
+
+> 在最开始写博客的时候，我便在此处 block 了许久。我完全无法理解为什么存在原文中的这个限制："While expert-choice routing has a number of advantages, it has one distinct problem: the top-$k$ operation is non-causal. **This means that whether a given token’s routing weight is among the top-$k$​ for the sequence depends on the values of the routing weights for tokens that come after it, which we don’t have access to when autoregressively sampling."**
+>
+> 后面发现，这是因为我不了解 LLM 基本的 Inference 原理。强烈推荐阅读一下这篇博客：[Basic LLM Inference/Generation，一篇就够了](https://zhuanlan.zhihu.com/p/694176507)。我相信这能解决你的一部分困惑。如果你想从代码的角度去理解 LLM 生成，推荐阅读我注释过的[ `Llama` 源代码片段](https://github.com/keli-wen/meta-llama2-explain/blob/main/llama/generation_cn_comment.py#L194-L385)。
+
+如何理解这个因果关系呢？在 training 阶段，整个完整的 tokens 序列会被输入到 transformer block 并得到下一次输出。因此，router 在训练阶段可以浏览到完整的 sequence 序列（尽管我们有 mask），然后进行 top-k 操作。然而，当我们在进行自回归采样（Autoregressively Sampling） 时，我们只有当前的序列（而非完整生成后的序列），此时我们无法判断已经生成的这些 tokens 的 router 权重是否在**完整生成序列**中的 top-k。
+
+> **Q** ： 为什么我们需要判断当前 sampling  tokens 是否在**完整生成序列**中的 top-k ，为什么不是在当前已经采样生成的 tokens 中使用 top-k 操作呢？
+>
+> **A:** 还待解决。
+
+我们分别用两种方法来解决这个问题。
+
+第一种方法是**引入一个简单的辅助损失**。实验结果表明它会影响主要的语言建模目标大约 0.2 - 0.3% 但是可以解决自回归采样中存在的问题。该损失的原理是：
+
+1. **模型输出 logits**：在训练阶段，模型（这里是 router ）输出一组 logits，这些 logits 是未归一化的分数，可以是任意实数。
+2. **计算 top-k**：根据这些 `logits` 计算 top-k，即选择分数最高的 k 个 token。
+3. **生成目标标签**：生成一个与 `logits` 大小相同的 `target` 张量。对于属于 top-k 的 token，其对应的 target 设为 1，其余设为 0。
+4. **计算损失**：使用二元交叉熵损失，将 logits 进行 `sigmoid` 后与 `target` 进行比较，计算损失并进行反向传播。
+
+直观的说，这个辅助损失能够使得在 top-k 中的 token 经过 router 输出的 `logits` 在 `sigmoid` 后大于 0.5 （趋近 $1$ ），而不在 top-k 中的 tokens 则小于 $0.5$ （趋近于 $0$ )
+
+> 📖：由于 `BCEWithLogitsLoss` 会自动使用 `sigmoid` 处理输入，所以我们在代码中不需要显式的调用。
+
+第二个方法是引入一个小型的辅助 MLP（类似于第二个 router），它会接受与 router 相同的输入，但是会 stop gradient （也就是禁止梯度回传，避免输入的梯度）。它的输出是预测该 token 的 router weight 是否在该序列的 top-k 集合中。由于 stop gradient 的存在，该方法不会影响语言建模的目标，并且实验证明也不会影响 `step` 的效率。
+
+> **Q:** 什么是 **stop gradient** ？它和 `PyTorch` 中常见的 `no_grad` 有什么区别？
+>
+> **A:** 这个概念在 Kaiming 的 [《Exploring Simple Siamese Representation Learning》](https://openaccess.thecvf.com/content/CVPR2021/papers/Chen_Exploring_Simple_Siamese_Representation_Learning_CVPR_2021_paper.pdf) 中有所提及。其原理非常简单，就是**阻止**梯度回传到输入 `input`。其 `PyTorch` 实现可以理解为 `input.detach()`。
+>
+> <img src="./assets/MoD_stop_gradient.png" alt="MoD_stop_gradient.png" style="zoom:23%;" />
+>
+> 它与 `no_grad` 是完全不同的概念，`no_grad` 代表这部分操作**都**不计算任何梯度。
+>
+> **Q:** 为什么方法二不会影响语言建模的目标而方法一会？
+>
+> **A:** 因为方法一中，router 引入了辅助任务，辅助损失会影响 router 的权重从而影响语言建模。而方法二中，我们用了辅助 MLP 来处理这个问题，并且 stop gradient 保证了该辅助任务的训练不会影响到输入的梯度，自然不会影响语言建模的效果。
+
+借助这两个新方法，我们可以在**自回归**采样中仅通过 router 的输出判断 token 是否存于 transformer block 的计算，而不需要依赖未来的 token。经验证明判断一个 token 是否在 top-k 集合中是个相对简单的辅助任务，可以快速实现到 99% 的准确率。
 
 ### 2.6 Training methods
 
-所有模型均采用相同的基本超参数配置，例如训练步骤的余弦调度、128的批次大小、2048的序列长度，唯一的变化是在等效浮点操作（isoFLOP）分析期间调整了模型的层数、头数和嵌入大小，以生成不同规模的模型。
+所有模型使用相同的基本超参数配置（例如，余弦调度等于训练步数的 1 倍，批次大小为 128，序列长度为 2048），只是改变了层数、头数（多头自注意力）和嵌入大小，以在 isoFLOP（等效浮点操作） 分析中生成不同大小的模型。型。
 
 ## 3. Result
 
