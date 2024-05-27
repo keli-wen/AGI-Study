@@ -1,32 +1,48 @@
-# Mixture-of-Depths: 动态算力分配，一篇就够了。
+# Mixture-of-Depths: Transformer-based LLM 动态算力分配，一篇就够了？
 
 - author: @LastWhisper
 
-本文是我拜读的第一篇 Conditional Computation 领域的 paper。我会尽量深入，保证知其所以然，任何可能存在困惑的地方我都尝试在一篇文章内解决。因为我本人也是小白，有什么理解上的问题欢迎大家指正。
-
-> **Q ：Why name `Depths`?**
->
-> **A** ：TODO
+本文是我精度的第一篇 Conditional Computation 领域的 paper。我会尽量深入，保证知其所以然，任何可能存在困惑的地方我都尝试在一篇文章内解决。因为我本人也是小白，有什么理解上的问题欢迎大家指正。
 
 ## 0. Abstract
 
-基于 Transformer 的语言模型通常会将 FLOPs (运算量) 均匀分配给整个输入序列。然而，Mixutre-of-Depths 证明了 Transformer 可以学会动态地将 FLOPs(或计算资源) 分配给序列中的**特定位置**，从而可以在不同深度（不同 Layer）上优化序列的计算资源分配。
+基于 Transformer 的语言模型通常会将 FLOPs （运算量） 均匀分配给整个输入序列。然而，Mixutre-of-Depths 证明了 Transformer 可以学会动态地将 FLOPs（或计算资源）分配给序列中的**特定位置**，从而可以在不同深度（不同 Layer）上优化序列的计算资源分配。
 
-我们的方法通过限制可参与自注意力 (self-attention) 和 MLP 计算的最大 token 数量 $k$ 来强制实现总计算量的限制。需要处理的 token 由使用 top-k 的 router 架构来确定。与其他的条件计算技术不同，由于 $k$ 是预先定义的，这种简单的程序使用了具有已知 tensor 大小的静态计算图。然而，由于具体参与计算的 $k$ 个 token 是动态决定的，该方法可以在时间和模型深度维度上**非均匀地分配** FLOPs。因此，计算消耗在总量上是可预测的，但在 token 级别上是动态分配的和与上下文敏感的。
+我们的方法通过限制**可参与**标准 Transformer block（self-attention 和 MLP）计算的最大 token 数量 $k$ 来强制实现总计算量的限制。由使用 top-k 的 router 架构来决定哪些 token 需要处理。与其他的条件计算技术不同，由于 $k$ 是预先定义的，该方法具有已知 tensor 大小的静态计算图。然而，由于具体参与计算的 $k$ 个 token 是动态（由 router）决定的，该方法可以在时间和模型深度维度上**非均匀地分配** FLOPs。因此，计算消耗在总量上是可预测的，但在 token 级别上是动态分配的和与上下文敏感的。
 
 经过这种方式训练的模型不仅能动态地分配计算资源，还能高效地进行分配。与 baseline 相比，这些模型在等效的 FLOPs 和训练时间下达到了相同的性能，但每次前向传播所需的 FLOPs 只是 baseline 的一小部分，并且在训练后采样过程中速度可提高 50% 以上。
 
 ## 1. Introduction
 
+平时工作中，我们能感受到**并非所有的问题都需要相同的资源来解决**，有些任务更重要需要投入更多的计算资源，有些任务不重要可以简单处理甚至略过。同样地，在语言建模中，并非所有的 tokens 都需要投入相同的资源（即算力）来进行处理。然而，transformer 模型在前向传播中对每个 token 都花费相同的计算量。**如果前面的假设正确，理想情况下，transformers 可以通过避免不必要的计算来减少总计算开销。**
 
+这其实就涉及到了 Conditional Computation （条件计算）。该技术试图通过在需要时才进行计算来减少总计算开销。有兴趣的可以阅读[《ICLR2016: CONDITIONAL COMPUTATION IN NEURAL NETWORKS FOR FASTER MODELS》](https://arxiv.org/pdf/1511.06297)。
+
+但是 MoD 作者们认为，现有的工作都会**引入动态计算图**，因此效果不佳，最有前途的条件计算工作应该是使用静态计算图和确定的 tensor 大小，这样可以最大化硬件的利用率。
+
+> ⚠️ 其实关于这块的动态图/静态图的计算优势，本人理解的不是非常深刻，希望有大佬能补充一些见解。
+>
+> 我之前简单阅读过一个利用静态图加速的工作 JAX-LOB，该论文整个性能增益全都来源于固定的 tensor 大小和 JAX JIT 优化，可以实现最高 8 倍的性能优化。
+
+因此，我们考虑使用 **static compute budget（静态计算预算）**进行语言建模，该预算可以小于标准 Transformer 所使用的计算预算。**而网络必须学会如何通过在每一层为每个 token 做出计算分配决策，动态地分配可用的计算资源**。
+
+在我们的实现中，总计算量并非由网络的即时决策的，而是在训练前由用户定义，并在训练期间保持不变。因此，我们可以提前预见并利用硬件效率的提升，比如我们会减少内存占用，或者减少每次前向传递所需的 FLOPs 等。重要的是如后面将要阐述的，**这些效率提升是可以在不影响整体性能的情况下实现。**
+
+MoD 采用的是一种类似 Mixture of Experts (MoE) Transfomers 的理念，在不同深度（不同 Layer）上动态的决定 token 的路由结果。但是与 MoE 不同的是，我们选择的是不同计算路径：决定是对一个 token 进行计算（例如标准Transformer 的情况），或者是通过残差连接跳过它（节省计算开销）。同样与 MoE 不同，MoD 将这种 routing 应用于标准 Transformer block （前馈 MLPs 和 multi-head attention）。而 MoE 通常只在 MLP 部分选择性地激活不同的子网络，而 Attention 仍然会处理所有的输入 token。**因此，这不仅影响我们处理的 keys 和 queries，还影响路由决定哪些 tokens 进行更新，以及哪些 tokens 可供关注。我们将这种策略称为Mixture-of-Depths（MoD），来强调 token 在 Transformer 模型不同深度下，可以由不同数量的 layer 进行处理。**
+
+MoD 技术还允许在模型的性能和效率上进行权衡。MoD 可以用相同的计算了计算出比标准 Transformer 效果更好的模型，同时 MoD 还支持训练一个效果与标准 Transformer 对齐，但是前向传播仅需要 50% FLOPs 的模型。总结下来，实验证明 MoD 能够智能地路由 token，因此他们可以使用更少的计算量实现更好的模型。
+
+![MoD_overview](./assets/MoD_overview.png)
+
+***Figure1.Explanation*** Mixture-of-Depths Transformer. 与专家混合（MoE）Transformer类似，我们使用 router 在可选的计算路径中进行选择。但不同于 MoE Transformer，这里的选择是**1）参与标准 Transformer Block 的计算（即 Attention 和 MLP）**或**2）残差连接**。由于某些 token 会选择第二种路径，MoD Transformer 的总 FLOPs 一定比标准或 MoE Transformer 要小。右图上角展示了一个训练后的模型在处理短序列时的路由决策（为了可视化，序列被截断为 64 个 token）。通过观察这些选择，可以发现一些 token 虽然仅经过了很少量的处理（紫色），但却在模型较深的位置被处理。相较于传统的基于**提前退出（early stop）**的条件计算方法（会连续计算直到退出）或标准 Transformer（所有块都参与计算），MoD 展现了独特的计算方式。
 
 ## 2. Implementing Mixture-of-Depths Transformers
 
 我们整体的设计策略如下：
 
-- 通过限制可以参与块计算（即 self-attention 和随后的 MLP）的序列中的 tokens 数量，设置一个低于普通 transformer 的静态计算预算。例如，正常的 transformer 允许序列中的所有 tokens 进行 self-attention 的计算，我们则限制只有 50% 的 tokens 能进行 self-attention 的计算。
-- 利用一个逐块的路由来估计为每个 token 计算一个标量权重（==为什么要强调标量 Scalar 呢？可能是因为 Scalar 代表一个单一的数值权重，而非向量或矩阵==），用于表示路由器对于该 token 的偏好（是参与计算，或者残差链接）。
-- 确定每一个序列，在每一个块的 top-k 标量权重，以选择将会参与到块计算的 tokens。由于只会有确定的 k 个 token 将参与块的计算，因此计算图和 tensor 大小在整个训练过程中保持不变；仅仅只有哪些 tokens 会参与是动态的和上下文敏感的。（由路由器决定）
+- 通过限制可以参与 Transformer Block 计算的 tokens 数量，设置一个低于标准 Transformer 的静态计算预算。例如，标准的 transformer 允许序列中的所有 tokens 进行 self-attention 的计算，我们则限制只有 50% 的 tokens 能进行 self-attention 的计算。
+- 利用一个逐块的 router 来估计为每个 token 计算一个标量权重，用于表示路由对于该 token 的偏好程度（是参与计算或残差链接）。
+- 然后确定每一个序列在每个 Transformer block 中权重位于 top-k 的集合，以选择将会参与计算的 token。由于仅有确定的 $k$ 个 token 将参与 Transformer block 的计算，因此计算图和 tensor 大小在整个训练过程中保持不变；仅仅只有哪些 tokens 会参与计算是动态的和上下文敏感的。
 
 ### 2.1 Defining a compute budget
 
@@ -37,24 +53,20 @@
 > - 静态计算预算（static computation budget）可以理解为整个模型的总计算量或 FLOP 数。
 > - 容量（Capacity）代表整个 transformer 中参与计算的总 tokens 数。
 >
-> 依据我的理解，在该文章中，我们可以这样理解：“通过修改容量修改了计算预算“。这对于后文实验部分的理解也许有帮助。
+> 依据我的理解，在该文章中，我们可以这样理解：“**通过修改容量修改了计算预算**“。这对于后文实验部分的理解也许有帮助。
 
-通常情况下，使用条件计算的 transformer 的总 FLOPs 是由 token capacity 决定的，而非任何路由的结果。这是因为**静态图的实现**考虑的是最差情况。例如，如果路由之后只有少部分的 tokens，我们会填充到对应的容量大小，或者会删除超出容量部分的 tokens。
+通常情况下，使用条件计算的 Transformer 的总 FLOPs 是由 token capacity 决定的，而非任何路由的结果。这是因为**静态图的实现**考虑的是最差情况。例如，如果路由之后只有少部分的 tokens，我们会填充到对应的容量大小，或者会删除超出容量部分的 tokens。
 
-> **Q：为什么静态图的实现是这样的呢？简单描述下动态和静态图之间的区别？**
->
-> **A：**TODO
-
-我们可以通过降低计算的**容量**来实现相比标准 transformer 每次前向传递使用更少的计算预算。然而，如果不加选择地减少计算预算，可能会导致性能恶化。我们的假设某些特定的 tokens 可能不需要像其他 tokens 那样被多次处理，并且这些 tokens 可以通过学习被识别出来。因此，如果网络能够学习如何选取合适的 tokens 用来填充容量，则有可能保持模型性能不变。下面将介绍为此目的而设计的 routing scheme。
+我们可以通过降低计算的**容量**来实现相比标准 Transformer 每次前向传递使用更少的计算预算。然而，如果不加选择地减少计算预算，可能会导致性能恶化。我们的假设某些特定的 tokens 可能不需要像其他 tokens 那样被多次处理，并且这些 tokens 可以通过学习被识别出来。因此，如果网络能够学习如何选取合适的 tokens 用来填充容量，则有可能保持模型性能不变。下面将介绍为此目的而设计的 Routing Scheme。
 
 ### 2.2 Routing around transformer blocks
 
 路由实际上是把 tokens 在该层的行为进行二分类：
 
-- 通过 self-attention 和 MLP blocks 进行计算。
-- 残差链接。
+- 通过 Attention 和 MLP 进行计算。
+- 残差链接，不进行计算。
 
-如果我们将路径 (1) 的容量设置为小于 $T$（序列和 batch 中的总 tokens 数）的任何值，那么每次前向传递的总 FLOP 数将少于标准 transformer。例如，如果我们将块的容量设置为 $\dfrac{T}{2}$ （即与标准 transformer 相比只有一半的标记数），那么在self-attention 过程中的 query 与 key 矩阵乘法将只需要普通 transformer 的 $25$% 的 FLOP 计算量（ $\dfrac{T^2}{4}$ 与 $T^2$ ​​)。类似的计算可以确定 MLP 对应的 FLOP 减少量。
+如果我们将路径 (1) 的容量设置为小于 $T$（序列和 batch 中的总 tokens 数）的任何值，那么每次前向传递的总 FLOP 数将少于标准 transformer。例如，如果我们将块的容量设置为 $\dfrac{T}{2}$ （即与标准 transformer 相比只有一半的标记数），那么在self-attention 过程中的 query 与 key 矩阵乘法将只需要标准 Transformer 的 $25$% 的 FLOPs（ $\dfrac{T^2}{4}$ 与 $T^2$ ​​)。类似的计算可以确定 MLP 对应的 FLOPs 减少量。
 
 从直观上来说，随着我们不断缩小块容量，每次前向传递的总 FLOP 数会减少（并且完成 forward 所需的时间也会减少）。但是，下游的性能也会受到我们缩小块容量的激进程度的影响，以及我们实现的路由算法的影响。
 
@@ -109,7 +121,7 @@ $$
 
 其中 $\widetilde{X}^l$ 是指对应 router 权值为 top-k 的 tokens embedding 集合（即所有满足 $r_i^l > P_\beta(R^l)$ 的 tokens embedding）， $f$ 则代表 transformer block 中的算子（Self-Attention 和 MLP）。你会发现 tokens $i$ 的结果 $x_i^{l+1}$ 同时受到其他 tokens $x_{i\neq j}^{l}$ 的影响， 这是因为 self-attention 操作的存在。由于输入到 $f$ 的 tokens 数量更少（因为 $\widetilde{X}^l$ 的集合大小为 $C$ 且 $C < S$ ），从而降低了用于 Self-Attention 和 MLP 的计算开销，因此 MoD Transformer 仅需要比标准 Transformer 更少的计算量。
 
-你还会发现，我们会将 $f$ 的输出乘上 router 的权重 $r_i^l$ 。**这样会将 router 权重置于梯度路径上，从而在语言建模的过程中受到梯度下降的影响**（也就是 train router）。Google 也说他们尝试了**不同的版本的实现**，即在残差链接的计算路径中也考虑引入 router 权重的影响（可以理解为 $x_i^{l+1} = r_i^l x_i^l$ ）但是后面发现，目前的版本已经能取得更好的效果， 并且实现起来更为简单。
+你还会发现，我们会将 $f$ 的输出乘上 router 的权重 $r_i^l$ 。**这样会将 router 权重置于梯度路径上，从而在语言建模的过程中受到梯度下降的影响**（也就是 train router）。Google 也说他们尝试了**不同的版本的实现**，即在残差链接的计算路径中也考虑引入 router 权重的影响（可以理解为 $x_i^{l+1} = r_i^l x_i^l$ ）但是后面发现，**目前的版本已经能取得更好的效果， 并且实现起来更为简单。**
 
 ### 2.5 Sampling
 
@@ -121,9 +133,11 @@ $$
 
 如何理解这个因果关系呢？在 training 阶段，整个完整的 tokens 序列会被输入到 transformer block 并得到下一次输出。因此，router 在训练阶段可以浏览到完整的 sequence 序列（尽管我们有 mask），然后进行 top-k 操作。然而，当我们在进行自回归采样（Autoregressively Sampling） 时，我们只有当前的序列（而非完整生成后的序列），此时我们无法判断已经生成的这些 tokens 的 router 权重是否在**完整生成序列**中的 top-k。
 
-> **Q** ： 为什么我们需要判断当前 sampling  tokens 是否在**完整生成序列**中的 top-k ，为什么不是在当前已经采样生成的 tokens 中使用 top-k 操作呢？
+> **Q:** 为什么我们需要判断当前 sampling  tokens 是否在**完整生成序列**中的 top-k ，为什么不是在当前已经采样生成的 tokens 中使用 top-k 操作呢？
 >
-> **A:** 还待解决。
+> **A:** 我认为，除了为了和训练的设定保持一致外，我们可能还需要考虑一个问题，使用**完整**和**当前**的 top-k 有什么区别呢？如果从 KV Cache 的角度来考虑，**完整的 top-k** 能够保证如果一个 token 在 top-k 集合中，那么它后续一定在 KV Cache 中，从实现角度更为简单，并且更满足：“决定哪些 tokens 进行更新，以及哪些 tokens 可供关注。”的设计目的。
+>
+> 而使用**当前的 top-k** 则存在许多问题，首先是每次可能需要重新计算 top-k 集合，我认为这存在计算开销。其次，**如果某个 token 之前在当前 top-k 集合中，然而之后却不在 top-k 中，那么 KV Cache 的存储空间就浪费了。**
 
 我们分别用两种方法来解决这个问题。
 
@@ -152,70 +166,158 @@ $$
 >
 > **A:** 因为方法一中，router 引入了辅助任务，辅助损失会影响 router 的权重从而影响语言建模。而方法二中，我们用了辅助 MLP 来处理这个问题，并且 stop gradient 保证了该辅助任务的训练不会影响到输入的梯度，自然不会影响语言建模的效果。
 
-借助这两个新方法，我们可以在**自回归**采样中仅通过 router 的输出判断 token 是否存于 transformer block 的计算，而不需要依赖未来的 token。经验证明判断一个 token 是否在 top-k 集合中是个相对简单的辅助任务，可以快速实现到 99% 的准确率。
+借助这两个新方法，我们可以在**自回归**采样中仅通过 router 的输出判断 token 是否存于 transformer block 的计算，而不需要依赖未来的 token。**经验证明判断一个 token 是否在 top-k 集合中是个相对简单的辅助任务，可以快速实现到 99% 的准确率。**
 
 ### 2.6 Training methods
 
-所有模型使用相同的基本超参数配置（例如，余弦调度等于训练步数的 1 倍，批次大小为 128，序列长度为 2048），只是改变了层数、头数（多头自注意力）和嵌入大小，以在 isoFLOP（等效浮点操作） 分析中生成不同大小的模型。型。
+所有模型使用相同的基本超参数配置（例如，余弦调度等于训练步数的 1 倍，批次大小为 128，序列长度为 **2048**），只是改变了层数、头数（多头自注意力）和嵌入大小，以在 isoFLOP 分析中生成不同大小的模型。
 
 ## 3. Result
 
+> 📖 这里是实验部分，个人主要做的是一个转述，由于文章没有开源，所以我会尽量保留原文的所有内容。
+
 ### 3.1 Training, isoFLOP comparisons
 
-选用较小的 FLOP budget(6e18) 来进行最优超参的确定。可以发现在 Figure3 左图中，最优的 MoD 模型有更低的 Loss 同时有更多的参数量（向下且向右）。这个现象的结果是：存在一个更小的 MoD 模型，能达到接近 optimal baseline 的性能，同时有更优的 step 速度。
+我们首先选用较小的 FLOP budget(6e18) 来进行最优超参的确定。可以发现在 **Figure3 左图**中，最优的 MoD 模型可以在训练更多的参数量的情况下有更小的 Loss（向下且向右）。通过这个现象不难推断：存在一个参数量更小的 MoD 模型，能达到接近 optimal baseline 的性能，同时训练的更快。
 
-Figure3 右图便是在解释这种可能。我们选择了 MoD Model#3 （大约有 220M 的参数，图中的3）和 isoFLOP optimal baseline Model#1（也是 220M 的参数，图中的1）进行比较。Model#3 在性能上能略好于 Model#1，但在训练时的 step 性能有着 60%+ 的提升。关键的是，在相同硬件上运行时，这两模型所需要的训练时间大致相同。
+**Figure3 右图**便是在解释这种可能。我们选择了 MoD Model#3 （大约有 220M 的参数，左图中的 `3`）和 isoFLOP SOTA baseline Model#1（也是 220M 的参数，左图中的 `1`）进行比较。Model#3 在性能上能略好于 Model#1，但在每次训练步骤的执行速度提升了接近 60%。更为关键的是，在相同硬件上运行时，这两模型所需要的训练时间大致相同。（也就是在相同的时间内训练一个效果略好且性能更优的模型）
 
-> 有些读者可能无法理解这段话，或者匆匆跳过了这段话。但是我觉得这里还是挺值得思考的，**为什么在参数量相同，模型性能接近，训练效率更优秀的情况下，训练时间相同是值得注意的呢？**不应该是只需要更短的训练时间来达到相同的模型性能嘛？！
+> **Q:** 什么是 `isoFLOP` 分析？
 >
-> 这是因为，虽然我们仍然需要相同的训练时间（**考虑到训练效率，意味着更多 epoch 得到接近的性能**）才能得到一个性能相近的模型，但是考虑到 MoD 对 forward 操作的性能优化。这等价于我们得到了一个性能接近但 Inference 效率大大提升的**推理模型**。
+> **A:** 这个术语可以理解为**等效浮点计算（操作）分析**，即在保持浮点数运算操作次数（FLOPs）相同的条件下，比较不同模型和不同算法的效果。所以这里的 `iso` 也许是 `isometric` 的意思。在初次阅读的时候，全网找来找去也没检索到该术语的起源，后面发现它可能是起源于 NIPS2022 的《[Training Compute-Optimal Large Language Models](https://proceedings.neurips.cc/paper_files/paper/2022/file/c1e2faff6f588870935f114ebe04a3e5-Paper-Conference.pdf)》，有趣的是这同样是 DeepMind 的 Paper。所以这应该是 DeepMind 首创的？（欢迎指正）
 >
-> 个人的理解是：高效的推理在生产端可能是更重要的？（欢迎指正）
+> **Q:** **为什么在参数量相同，模型性能接近，训练效率更优秀的情况下，训练时间相同是值得注意的呢？**
+>
+> **A:** 有些读者可能匆匆跳过了这段话。但是我觉得这里还是挺值得思考的，不应该是只需要更短的训练时间来达到相同的模型性能嘛？！
+>
+> 这是因为，虽然我们仍然需要相同的训练时间（**考虑到训练效率提升，意味 MoD 需要训练着更多 epochs**）才能得到一个性能相近的模型，但是考虑到 MoD 能优化 forward 操作的性能。这等价于我们能得到了一个性能接近但 Inference 效率大大提升的**推理模型**。我相信这在生产端是很有帮助的。
+>
 
 ![Figure3](./assets/MoD-Figure3.png)
 
-我们测试了两种路由方式：在**每个块前**路由或**每隔一个块**进行路由，使用的容量从序列总量的 12.5% 到 95% 不等。虽然**每隔一个块**的路由方案对于优秀的性能至关重要，但我们发现激进的容量减少效果最佳（当容量减少到总序列的 12.5% 时，观察到渐进的改进，此时有 87.5% 的令牌绕过块处理，性能在此点之后开始下降）。因此，似乎只要有频繁的机会进行完整容量的自注意力和多层感知机计算，网络对显著的容量减少是鲁棒的。
+***Figure3.Explanation*** MoD hyperparameter tuning. 该图片用于展示对 MoD 模型的超参进行调优。在固定 6e18 的 FLOPs budget 下寻找最优的超参进行 isoFLOP 分析。**在左图中，灰色框表示性能优于 isoFLOP 最优 baseline 的 MoD 模型**。我们发现，**最优的 MoD 模型是在每隔一个 Transformer Block 进行路由，并且 top-k 设定为 $k=256$** （即，12.5% 的 tokens 参与 Transformer Block 的计算，而 87.5% 的 tokens 则残差连接不进行计算）。右图则主要展示一些模型的学习曲线。可以发现，模型#3 的性能与 isoFLOP 最优 baseline 相当，但由于每次前向传播所需的 FLOPs 较少，训练速度提升了 66%。
 
-可学习的路由至关重要，如果 MoD 只使用一个随机的路由（对高斯采样得到的路由权重进行 top-k 操作）会导致性能与原始 baseline 和使用可学习路由的 MoD 有很大的 GAP。
+我们测试了两种路由方式：在**每个 Transformer Block 前**路由或**每隔一个 Transformer Block** 进行路由，使用的容量从序列总量的 12.5% 到 95% 不等。虽然**间隔路由**的方案对于性能至关重要，但我们发现激进的减少容量效果反而更好（当将容量减少到总序列的12.5%时，即87.5%的tokens绕过块时，性能逐渐提升，而超过这一点则性能开始下降）。**因此，只要有频繁的机会通过全容量的 Transformer Block （即 Attention 和 MLP），网络在面对容量显著减少的情况下，依然能表现出很强的鲁棒性。**
 
-~~Figure3 展示的是 MoD 模型的超参调优。在固定 6e18 的 FLOPs budget 下寻找最优的超参进行 isoFLOP 分析。左图中的灰色框（也就是所有 loss 低于大概 3.13 部分的灰色阴影区域）代表着，如果你能在固定 FLOPs 下，模型的 loss 能降至对应区域，那么该模型的性能就好于**当前的 isoFLOP optimal baseline**。结果发现，最优秀的模型是哪些**可以在每一块有选择路由的模型。**并且 TOP-K 为 256，这代表每个 block，只有 256 个 tokens 能进行计算，剩余的 1792 个 tokens 则直接跳过了（残差链接）。右图则是选定对应的模型。可以发现，模型3能和 optimal baseline 有相同的性能，但是由于 MoD 的性质，只需要更少的 FLOPs，所以性能提升了接近 66%。~~
+> ✨个人思考：如果 MoD 使用了间隔路由，那么其模型训练/前向传播的效率提升上限就是 100% ，感觉没有那么劲爆。
 
-~~我对这张图的理解便是：相同的 FLOPs，MoD 能训练出效果更好的模型；相同的模型效果，MoD 所需要的 FLOPs 更少，性能更高。~~
+同时通过图 3 可知，**可学习的路由至关重要**（参考橙色曲线），如果 MoD 只使用一个随机的路由（对高斯采样得到的路由权重进行 top-k 操作选择进行计算的 token）会导致性能急剧下降，与 baseline 和基于可学习路由的 MoD 之间存在较大差距。
 
-> **Q**：`isoFLOP` 是什么？
+![MoD_isoFLOP_Analysis](./assets/MoD_isoFLOP_Analysis.png)
+
+***Figure4.Explanation*** isoFLOP analysis. 我们采用了上一个实验中选出的 12.5% 容量的 MoD 模型进行 FLOPs 为 6e18，2e19 和 1e20 的等效浮点计算分析。训练的模型参数量也从 60M 到 3B 不等。右图展示的是：相对于最优 baseline，其他模型每次前向传播所需 （经过归一化的）浮点运算量。研究发现,**存在一些 MoD 模型不仅训练的更快(由于每次前向传播所需的 FLOPs 更低)，而且其性能也超过了 SOTA Baseline**。
+
+本质上图 4 就是在做等效浮点计算分析，尝试在不同数量级的参数下进行实验。结果证明了我们可以训练出效果更好且训练速度/前向传播更快的 MoD 模型。
+
+训练速度的提升主要来自两个方面：
+
+1. 在 MoD Transformers 中，每个参数所需要的 FLOPs 比率低于 baseline，因为有一部分 tokens 跳过了计算。因此，对于给定的模型大小，MoD Transformers 每次前向传播所需的 FLOPs 更少。
+2. 由于 isoFLOP 最优的 MoD Transformers 比 isoFLOP STOA baseline 参数量更大且 loss 更低，因此存在一些较小的 MoD 模型，它们的性能与 isoFLOP SOTA baseline 相当或更好，而且由于参数量更小，step 效率更高。
+
+**总体来看，存在一些 MoD Transformers，它们的性能与 isoFLOP SOTA baseline 相当，同时 step 速度更快**，这是因为它们每参数使用的 FLOPs 更少且参数总量更少。
+
+图 4 还节食了一个重要方向：最优的 MoD Transformer 是**那些每次前向传播使用的 FLOPs 与 isoFLOP SOTA baseline 相同的模型（横坐标为 1.0 的黑色 marker）**。利用这个性质，我们可以直接预测在给定 isoFLOP 训练预算下，哪种参数大小的 MoD Transformer 表现最佳：因为我们只需调整模型大小直到给定 MoD 配置（即容量和路由频率）下的每次前向传播使用的 FLOPs 与 isoFLOP SOTA baseline 相同，就能得到该配置下最优的 MoD 模型。**并且经验表明，在增加 FLOPs 时，增加深度（layer 数量）比增加宽度（特征维度）效果更好**。
+
+然而，尽管在给定总计算预算和 MoD 设定下，我们能通过 isoFLOP SOTA baseline 的前向传播 FLOPs 来确定最优的 MoD 模型，但是这无法保证我们能找到**最优的 MoD 设定**。最优的容量是通过经验确定的，**论文发现使用 12.5% 容量且交替路由通常是最优的 MoD 设定。**
+
+**我们注意到，在更大参数规模下，相对于等效大小的 baseline，MoD Transformers 在内存方面有所节省**，某些 MoD 模型需要的设备总数更少（即更小的 TPU 拓扑结构）。论文没有对此进行广泛研究，**但预计随着模型规模的扩大，这些节省在选择训练 MoD Transformer 时可能成为一个重要的考虑因素，并且在自回归采样期间对 KV 缓存大小有显著的积极影响。**
+
+> **Q:** 为什么会对 KV cache 大小有积极影响呢？
 >
-> 这个术语可以理解为，在保持浮点数运算操作次数（FLOPs）相同的条件下，比较不同模型和不同算法的效果。所以这里的 `iso` 也许是 `isometric` 的意思。在初次阅读的时候，全网找来找去也没检索到该术语的起源，后面发现它可能是起源于 NIPS2022 的《[Training Compute-Optimal Large Language Models](https://proceedings.neurips.cc/paper_files/paper/2022/file/c1e2faff6f588870935f114ebe04a3e5-Paper-Conference.pdf)》，有趣的是这同样是 DeepMind 的 Paper。所以这应该是 DeepMind 首创的？（欢迎指正）
->
-> **Q**：如果我们固定了 budgets，是自动固定 top-k 中的 k 还是手动呢？
->
-> 显然，我认为是自动的，固定的 k 的情况下我们能计算出 Layer 固定需求的 FLOPs，所以给定了 budgets 或者 capacity，我认为 top-k 中的 k 能够直接计算得出。
->
-> ==难道它同时需要指定 static budget 和 sequence capacity 嘛？static budget 和 sequence capacity 有啥关系呢？==
+> **A:** 由于 router 机智的确定，我们可以认为每层 Transformer block 仅需要使用 $k / N$ 大小的 KV Cache，这是因为**我们只需要记录并提供位于 top-k 集合中 tokens 的 KV Cache 用来参与 Attention 计算。**我感觉这个特点还挺有价值的，毕竟能显式的优化 KV Cache 的适用。
 
+![MoD_Routing_Analysis](./assets/MoD_Routing_Analysis.png)
 
+***Figure5.Explanation*** isoFLOP analysis. 我们训练了一个 MoD Transformer，在其中交替使用了 12.5% 容量的 Transformer block 和标准的 Transformer block。正如我们所预想的，仅有稀疏的 token 被路由参与 Transformer block 的计算，尽管网络有时候仍倾向于让某些 token 一直参与计算。（可以参考左图中序列的尾部，存在部分连续且垂直的蓝色色块）同时，如右图所示，路由器权重的分布与辅助 loss 的要求一致：大约 12.5% 的权重超过 0.5，87.5% 的权重低于 0.5（右侧直方图）。
+
+图 5 展示了交替使用路由块训练的 MoD Transformer 的路由架构。尽管路由的策略非常激进（设置了非常小的容量），MoD Transformer 相对 baseline 仍存在性能提升。同时，图 5 也展示了一些有趣的现象值得进一步研究。即有些 tokens 似乎随着 Transformer 计算的深入参与每个块的计算，而其他 tokens 则尽可能选择跳过计算。**初步分析表明，那些频繁参与计算的 tokens 与具有更高熵的输出预测相关，这可能对应于更难预测的情况**。
+
+> **Q:** 如何理解更高熵的输出预测？以及这里说的更难预测是什么意思？
+>
+> **A:** 首先，熵（entropy）是衡量不确定性的一种度量。在上下文中，预测的熵越高，表示模型对该预测的信心越低，可能性分布更加分散。这意味着模型难以确定哪个输出是正确的，**存在较大的预测不确定性**。
+>
+> 假设我们在做语言模型的任务，比如文本生成或机器翻译。对于一些 token，如常见的单词或结构简单的句子，模型可能很容易做出准确预测，因为它们的上下文明确，模型的信心高，熵低。然而，对于一些复杂的句子结构、多义词或需要长距离依赖的信息，模型在预测时可能会遇到困难，这些情况下的预测熵更高。
+>
+> 例如（该例子源自 GPT4o）：
+>
+> - **简单预测**：在句子 "The cat sits on the mat" 中，预测 "sits" 可能是相对容易的，因为上下文明确，模型对预测的信心高，熵低。
+> - **困难预测**：在句子 "She noticed the man with the telescope" 中，预测 "telescope" 可能更困难，因为这句话有歧义（telescope 是修饰man还是noticed？），模型的预测不确定性更高，熵更高。
+>
+> 所以说，这里更难预测应该是指，该 token 需要看到更多其他 token 的信息，所以需要参与多次 Transformer block 的计算。
 
 ### 3.2 Auto-regressive Evaluation
 
+我们在自回归采样过程中评估了 MoD 的不同模型设定（见图6）。每个模型都在相同的**保留数据**上进行了测试，这些数据包含 256000 个序列（500M 个 token）。当我们**从 top-k 路由架构切换到基于预测器的路由架构时**，观察性能几乎没有下降。与训练实验一致，存在一些 MoD 模型的性能优于 isoFLOP SOTA baseline，同时每次前向传递所需的 FLOPs 更少。这些结果表明， MoD Transformer 减少的计算开销在各个场景都是通用的（训练，采样，测试等）。
 
+> **Q:** 什么是保留数据呢？
+>
+> **A:** 保留数据即 held-out data，是机器学习和统计学中的一个常见术语，指的是在模型训练过程中没有用来训练模型的数据集。
+>
+> **Q:** 为什么在该 Auto-regressive Evaluation 中，存在 `MoD using top-k` 的方法呢？前文中不是提及该方法是不可行的吗？论文中为什么能以此方法作为对比，进行实验？
+>
+> **A:** 一个非常相当然的猜想是，我们只使用保留数据中的序列进行一次 next token 的预测。由于此时只需要进行一次预测，可以假设 top-k 是因果的。但是这又和该小节的标题 "Auto-regressive Evaluation" 存在矛盾，很是奇怪。
+
+![MoD_AutoRegressive_Evaluation](./assets/MoD_AutoRegressive_Evaluation.png)
+
+***Figure6.Explanation*** Auto-regressive evaluation. 在自回归采样过程中，从训练中的非因果 top-k routing 架构切换到基于因果预测（也就是 MLP）的方法，性能几乎没有下降。出现这个现象的原因，可能是由于学习这一预测问题相对容易，训练不久即可达到 97% 以上的准确率。
 
 ### 3.3 Mixture-of-Depths-and-Experts (MoDE)
 
+MoD 和 MoE 两个技术的名字非常统一，那么很自然的会联想到两者能否互相叠加。结果证明 MoD 不仅可以集成到标准 Transformer 模型中，也可以与 MoE (Mixture of Experts) 模型相结合，组成 **MoDE (Mixture of Depths and Experts) 模型**。**在图 7 中**，论文展示了 MoD 与 MoE 相结合时的结果，可以发现二者的性能提升是可以互相叠加的。而关于 MoDE 的实现，论文尝试了两种 MoDE 架构（但是从实验结果看不出哪个更好，依据上下文，我猜测图表中的结果源自 Integrated MoDE）：
 
+**Stage MoDE**：
+
+- 在 Attention 步骤之前，路由决定 token 参与 block 的计算或者残差连接跳过计算。
+- 该架构优势在于允许 tokens 跳过 Attention 阶段。
+
+**Integrated MoDE**：
+
+- 通过在常规 MLP 专家中集成 **无操作（no-op）** 专家来实现等价于 MoD 的路由效果。
+- 该架构的优势在于简化了路由机制（避免了 Staged 中多次路由可能引发的效率以及各种问题）。
+
+我们注意到，Integrated MoDE 要明显优于简单地减少传统 MoE 模型中专家的容量（能接收到 token 数），并依赖 token dropping 来实现残差路由。**我们认为这是因为在 Integrated MoDE 架构中，token 可以明确地学习选择绕过专家的残差路径，而非由于容量减少的限制，token 希望选择专家但是因为容量问题被丢弃。**
+
+![image-20240527222831288](./assets/MoD_MoDE.png)
+
+***Figure7.Explanation*** Mixutre-of-Depths-and-Experts (MoDE). MoD 可以通过两种直接的方式与 MoE 集成：Staged MoDE 是先实现 MoD，再实现 MoE；Integrated MoDE 则只需一次路由操作，将 token 分配给标准 MoD 专家或对应 MoD 的无操作（no-op）专家。
 
 ## 4. Discussion
 
-> Need refinement.
+### 4.1. MoD Transformer 的优势
 
-学习型路由机制有时是非因果的;也就是说,在确定给定标记的路由决策时,会使用关于未来的信息。这通常适用于 top-k 路由机制,因为它们无需辅助平衡损失。然而,top-k 路由机制在后训练自回归采样过程中存在困难,因为在那里无法使用关于未来标记标识的信息来确定路由决策。在这项工作中,我们展示了可以在训练期间成功使用 top-k 路由方案,但在后续的自回归采样中不需要它。一个简单的辅助分类器或对路由器的辅助损失就足以学习 top-k 路由决策,以便在自回归采样期间模仿 top-k 决策,同时最小化或不降低性能。
+实验证明，MoD Transformer 可以在前向传播使用更少 FLOPs 的情况下，性能超越 isoFLOP SOTA baseline。这意味着，在给定的训练 FLOP 预算内，我们可以训练出比基线模型更快且性能更好的模型。在 MoD 之前，要训练出既快速又性能优于或等同于 isoFLOP SOTA baseline 的模型，需要使用额外的计算资源对较小的模型进行过度训练（值得注意的是，这种过度训练技术对 MoD Transformer 仍然适用，并且速度提升会更加显著，因为我们可以训练 capacity 更小的 MoD 模型）。
 
-直观上,标记可能会学习绕过某些块,因为在该步骤中所做的预测更容易,因此不需要太多计算。然而,这种策略显然不是网络所学习的全部。如果某个标记在特定块中不参与自注意力,那么后续的标记也将无法关注它。因此,标记是否决定路由不仅影响当前步骤的预测,还会通过因果自注意力影响未来的预测,而网络如何权衡这些影响是由它们对总体语言模型目标的影响所指导的。
+### 4.2. FLOPs 存在更有效利用
 
-这一见解为 MoD 变体打开了大门,MoD 变体可以分离查询、键和值的路由。例如,对于某个自注意力计算,也许某个标记希望成为查询的一部分,但不希望成为键的一部分。我们可以进一步将这一思路扩展到"长期记忆"的领域:也许有些标记非常有价值作为键,而无论它们在出现时是否有用作查询。学习型路由可能是一种强大的机制,用于决定这些标记是什么,也许会将它们引导到一个长期记忆缓冲区中,在未来的自注意力过程中可用。这种长期记忆方法的一个优点是,标记只需在"记忆编码"的那一刻决定它们将来是否应该被检索。这比在未来的每一步都对整个记忆缓冲区执行完整的基于内容的查找更加高效,并可能是大幅增加用于做出预测的上下文长度的一步。
+虽然 MoD Transformer 每次前向传播需要的 FLOPs 更少，但这不意味着我们能随意减少 FLOPs。我们必须使用学习到的路由（类似于 MoE Transformer 中的路由）来确定 token 是否参与自注意力和后续的 MLP 计算（需要 FLOPs），或者绕过这些计算（节省 FLOPs）。然后，对于节省下来的 FLOPs 我们可以另作他用，例如，通过扩大模型参数规模或延长模型训练时间。**更重要的是我们的结果表明，在 标准 Transformer 模型中，FLOPs 的使用可能不够高效，而存在理论上更高效的使用方式。**
 
-与在有效相同的计算(通常是 MLP)之间路由的 MoE 转换器不同,MoD 转换器展示了在不同类型的计算之间路由的价值。在这项工作中,类型要么是常规转换器块,要么是空计算(在功能上等同于乘以零)。然而,我们可以进一步扩展这一思路,在更多类型的计算之间路由。例如,也许有些标记会被路由到"内存查找"功能,而另一些则会被路由到"工具使用"功能。一般而言,我们部署的路由机制为调整网络可用的计算类型及其相对成本(总 FLOP 数)提供了一个旋钮;如果要引入一种昂贵的计算,那么可以通过将其容量设置为一个较小的值来抵消,从而只路由少量标记到该计算中。
+### 4.3. 路由方案的重要细节
 
-总的来说,MoD 转换器是另一种可用于调整模型每次前向传递的计算量(从而影响推理时间)的工具。实现 MoD 所使用的机制也是通用的,为许多扩展和与其他技术(如 MoE)的集成打开了大门。
+> 🔥整段都非常重要，可以反复多读几次。
+
+学习的路由机制有时是非因果性的，也即**使用未来的信息来确定当前某个 token 的路由决策**。这在 top-k 路由机制中尤为常见，因为它们避免了对辅助平衡损失的需求。然而，top-k 路由机制在训练后自回归采样时会遇到困难，因为在此情况下无法使用未来 token 的信息来做路由决策。**本论文展示了可以在训练期间成功使用 top-k 路由方案，但在后续自回归采样中不需要它。通过一个简单的辅助分类器或在路由器上的 auxiliary loss，就足以学习 top-k 路由决策，使其在自回归采样期间能够模仿 top-k 决策，且几乎不影响性能。**
+
+### 4.4. MoD Transformer 机制的强大前景
+
+想象一下，由于在某个步骤中的预测较为简单，因此不需要太多计算，token 可能会选择绕过该 Transformer block。然而，这种路由策略显然不是网络所学到的全部。**如果一个 token 在某个块中不参与自注意力，那么后续的 tokens 也无法关注到它。因此，token 是否决定绕过计算不仅影响当前步骤的预测，还通过因果自注意力影响未来的预测**。网络通过它们对整体语言建模目标的影响来权衡路由决策。
+
+> ✨个人理解：“如果一个 token 在某个块中不参与自注意力，那么后续的 tokens 也无法关注到它。” 这一句其实告诉了大家 MoD 的大致代码结构。
+
+这种观点为 MoD 的变体打开了新思路，比如使其能够对 queris，keys 和 values 的路由进行解耦（三个不同的路由）。例如，某个 token 可能希望在 Self-Attention 计算中作为 query 但不作为 key。可以进一步想象，将这个想法扩展到 long-term memory （长期记忆）领域：某些 tokens 作为 keys 非常有价值，而它们在出现时是否作为 queries 并不重要。**这意味着一个token可以在当前步骤中不参与查询计算，但它依然可以作为键（keys）存储在长期记忆中，以便在未来的步骤中被其他查询（queries）访问。**学习路由可以成为一个强大的机制，用于决定哪些 tokens 适合进入长期记忆缓冲区，在未来的自注意力中使用。**这样的长期记忆方法的一个优势是，tokens 在 “记忆编码” 时刻便决定是否应在未来被检索。这比在未来的每一步中对整个记忆缓冲区进行全面的基于内容的查找更为高效，并且可能是大幅增加可用上下文长度以进行预测的一步。**
+
+> ✨个人理解：因为这样，我们不需要缓存大量的可能无用的 keys，我们在该 token 第一次被编码的阶段便可以通过路由机制判断该 key 是否应该加入到某些 long-term buffer 中。由于我们可以控制计算预算？我们可以在超长上下文环境下保证有限且有价值的 keys caching？
+
+### 4.5. MoD 与 MoE Transformers 的区别
+
+> ✨个人想法：想法听起来很 Fancy，可以 support 一些非常复杂的计算，并且由于我们可以进行容量控制，这样可以很方便的集成这些 heavy 的操作（计算）且不会让计算开销不必要的大。但是听下来感觉和 MoE 区别不是很大？而且有点虚的感觉。
+
+不同于 MoE Transformers 在相同类型的计算之间进行路由（通常是 MLPs），MoD Transformers 阐明了在不同类型的计算之间进行路由的价值。在 MoD 中，计算类型要么是常规的 Transformer block，要么是零计算。然而，可以想象将这个想法进一步扩展到更多类型的计算之间进行路由。例如，某些 tokens 可以路由到 “记忆查找” 功能，而其他 tokens 可以路由到 “工具使用” 功能。一般来说，我们部署的路由机制提供了一个调节网络可用计算类型及其相对成本（总 FLOPs）的旋钮，**如果想引入一种昂贵的计算，可以通过设置其容量为较小量来抵消其成本，从而仅将少量 tokens 路由到该计算**。
+
+## 5. Summary
+
+总之，MoD Transformers 是另一种可以用来**调节模型每次前向传播 FLOPs**（从而影响推理时间）的工具。用于实现 MoD 的机制也是通用的，为许多扩展和与其他技术（如 MoE）的集成打开了大门。这种灵活性和可扩展性使得 MoD Transformers 在计算效率和模型性能优化方面具有巨大的潜力。
 
 ## Reference
 
 - [Blog: FLOPS vs FLOPs](https://blog.csdn.net/Caesar6666/article/details/125102569)
+- [Paper: Training Compute-Optimal Large Language Models](https://arxiv.org/pdf/2203.15556)
