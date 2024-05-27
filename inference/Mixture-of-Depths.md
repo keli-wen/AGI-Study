@@ -24,7 +24,7 @@
 >
 > 我之前简单阅读过一个利用静态图加速的工作 JAX-LOB，该论文整个性能增益全都来源于固定的 tensor 大小和 JAX JIT 优化，可以实现最高 8 倍的性能优化。
 
-因此，我们考虑使用 **static compute budget（静态计算预算）**进行语言建模，该预算可以小于标准 Transformer 所使用的计算预算。**而网络必须学会如何通过在每一层为每个 token 做出计算分配决策，动态地分配可用的计算资源**。
+因此，我们考虑使用 **static compute budget（静态计算预算）** 进行语言建模，该预算可以小于标准 Transformer 所使用的计算预算。**而网络必须学会如何通过在每一层为每个 token 做出计算分配决策，动态地分配可用的计算资源**。
 
 在我们的实现中，总计算量并非由网络的即时决策的，而是在训练前由用户定义，并在训练期间保持不变。因此，我们可以提前预见并利用硬件效率的提升，比如我们会减少内存占用，或者减少每次前向传递所需的 FLOPs 等。重要的是如后面将要阐述的，**这些效率提升是可以在不影响整体性能的情况下实现。**
 
@@ -34,7 +34,7 @@ MoD 技术还允许在模型的性能和效率上进行权衡。MoD 可以用相
 
 ![MoD_overview](./assets/MoD_overview.png)
 
-***Figure1.Explanation*** Mixture-of-Depths Transformer. 与专家混合（MoE）Transformer类似，我们使用 router 在可选的计算路径中进行选择。但不同于 MoE Transformer，这里的选择是**1）参与标准 Transformer Block 的计算（即 Attention 和 MLP）**或**2）残差连接**。由于某些 token 会选择第二种路径，MoD Transformer 的总 FLOPs 一定比标准或 MoE Transformer 要小。右图上角展示了一个训练后的模型在处理短序列时的路由决策（为了可视化，序列被截断为 64 个 token）。通过观察这些选择，可以发现一些 token 虽然仅经过了很少量的处理（紫色），但却在模型较深的位置被处理。相较于传统的基于**提前退出（early stop）**的条件计算方法（会连续计算直到退出）或标准 Transformer（所有块都参与计算），MoD 展现了独特的计算方式。
+***Figure1.Explanation*** Mixture-of-Depths Transformer. 与专家混合（MoE）Transformer类似，我们使用 router 在可选的计算路径中进行选择。但不同于 MoE Transformer，这里的选择是**1）参与标准 Transformer Block 的计算（即 Attention 和 MLP）**或**2）残差连接**。由于某些 token 会选择第二种路径，MoD Transformer 的总 FLOPs 一定比标准或 MoE Transformer 要小。右图上角展示了一个训练后的模型在处理短序列时的路由决策（为了可视化，序列被截断为 64 个 token）。通过观察这些选择，可以发现一些 token 虽然仅经过了很少量的处理（紫色），但却在模型较深的位置被处理。相较于传统的基于 **提前退出（early stop）** 的条件计算方法（会连续计算直到退出）或标准 Transformer（所有块都参与计算），MoD 展现了独特的计算方式。
 
 ## 2. Implementing Mixture-of-Depths Transformers
 
@@ -240,8 +240,8 @@ $$
 >
 > 例如（该例子源自 GPT4o）：
 >
-> - **简单预测**：在句子 "The cat sits on the mat" 中，预测 "sits" 可能是相对容易的，因为上下文明确，模型对预测的信心高，熵低。
-> - **困难预测**：在句子 "She noticed the man with the telescope" 中，预测 "telescope" 可能更困难，因为这句话有歧义（telescope 是修饰man还是noticed？），模型的预测不确定性更高，熵更高。
+> - **简单预测**：在句子 `The cat sits on the mat` 中，预测 `sits` 可能是相对容易的，因为上下文明确，模型对预测的信心高，熵低。
+> - **困难预测**：在句子 `She noticed the man with the telescope` 中，预测 `telescope` 可能更困难，因为这句话有歧义（`telescope` 是修饰 `man` 还是 `noticed` ？），模型的预测不确定性更高，熵更高。
 >
 > 所以说，这里更难预测应该是指，该 token 需要看到更多其他 token 的信息，所以需要参与多次 Transformer block 的计算。
 
