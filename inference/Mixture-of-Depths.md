@@ -2,9 +2,11 @@
 
 - author: @LastWhisper
 
-本文是我精度的第一篇 Conditional Computation 领域的 paper。我会尽量深入，保证知其所以然，任何可能存在困惑的地方我都尝试在一篇文章内解决。因为我本人也是小白，有什么理解上的问题欢迎大家指正。
+本文是我精读的第一篇 Conditional Computation 领域的 paper。我会尽量深入，保证知其所以然。
 
-由于 MoD 是没有开源的，我这里做了非官方版本的代码实现，[代码仓库](https://github.com/Mixture-AI/Mixture-of-Depths)
+虽说是“一篇就够了”，但是实际上目前的解读我自认为还有很多的不足。由于个人水平有限，我希望这个帖子不仅能提供对于 MoD 文章的解读，还能作为一个讨论的平台方便大家讨论相关细节和实现。
+
+由于 MoD 是没有开源的，我这里做了非官方版本的代码实现，但还存在一些设计没有和原始论文中对齐。[代码仓库](https://github.com/Mixture-AI/Mixture-of-Depths)
 
 ## 0. Abstract
 
@@ -43,7 +45,7 @@ MoD 技术还允许在模型的性能和效率上进行权衡。MoD 可以用相
 我们整体的设计策略如下：
 
 - 通过限制可以参与 Transformer Block 计算的 tokens 数量，设置一个低于标准 Transformer 的静态计算预算。例如，标准 Transformer 允许序列中的所有 tokens 进行 Self-Attention 的计算，我们则限制只有 50% 的 tokens 能进行 self-attention 的计算。
-- 利用一个逐块的 router 来估计为每个 token 计算一个标量权重，用于表示路由对于该 token 的偏好程度（参与计算或残差链接）。
+- 利用一个逐块的路由来估计为每个 token 计算一个标量权重，用于表示路由对于该 token 的偏好程度（参与计算或残差链接）。
 - 然后确定每一个序列的所有 token 在每个 Transformer block 中路由权重位于 top-k 的集合，这个集合便是参与计算的 token 集合。由于仅有确定的 $k$ 个 token 将参与 Transformer block 的计算，因此计算图和 tensor 大小在整个训练过程中保持不变，仅仅只有参与计算的 token 集合是动态的和上下文敏感的。
 
 ### 2.1 Defining a compute budget
@@ -108,7 +110,7 @@ MoD 技术还允许在模型的性能和效率上进行权衡。MoD 可以用相
 MoD 选择 expert-choice 路由架构基于以下几个原因：
 
 - 不需要引入额外的辅助损失来解决可能的负载均衡问题。
-- top-k 操作暗含了相对大小的比较，router 可以通过比较所有 token 的权重来选择它认为最需要计算的 token。如果路由能得到（学习到）正确权重，那么该架构可以保证最重要的 token 一定位于 top-k 集合中，而 token-choice 架构则无法做到这一点。因为在 token-choice 架构中，每个 token 的选择仅取决于自己的路由权重，无法进行相对大小的比较。对于 MoD 来说，实际上另外一条计算路径是**空操作**，所以确保重要的 tokens 参与计算至关重要。所以 top-k 操作更能满足这个需求。
+- top-k 操作暗含了相对大小的比较，路由可以通过比较所有 token 的权重来选择它认为最需要计算的 token。如果路由能得到（学习到）正确权重，那么该架构可以保证最重要的 token 一定位于 top-k 集合中，而 token-choice 架构则无法做到这一点。因为在 token-choice 架构中，每个 token 的选择仅取决于自己的路由权重，无法进行相对大小的比较。对于 MoD 来说，实际上另外一条计算路径是**空操作**，所以确保重要的 tokens 参与计算至关重要。所以 top-k 操作更能满足这个需求。
 - 最后，**参考前文我提出的小问题，token-choice 架构难以保证使用准确的计算量**，可能会出现过处理和欠处理的情况，这是因为不同 tokens 选择路径的情况，参与计算的 tokens 数可能不同，计算量自然也不同，并且还需要一些额外的优先级设计来判断抛弃哪些多余的 tokens，**因此 token-choice 的实现会不必要的复杂**。反观 expert-choice 可以**仅用一个 top-k 操作划分出两个不相交的结合，并且能保证计算量的精准控制**。
 
 ### 2.4 Routing Implementation
@@ -123,7 +125,7 @@ token 经过路由得到对应的权重，然后结合 top-k 选择对应的 tok
 
 假设，对于给定的 layer $l$ ，我们有长度为 $S$ 的序列所有 token 的 embedding， 即 $X^{l} = \{ x_{i}^{l} | i \text{ is an integer, } 1\le i \le S\}$ 。那么对于给定的 token embedding 其路由权重是一个通过线性层计算得到的标量（Scalar）值： $r_{i}^{l} = w_\theta^{T} x_{i}^{l}$​ 。
 
-除了使用路由权重进行 top-k 集合的选择，**我们的目标是使用 router 权重来决定每个 token 通过 Transformer block 的计算输出**。假设 $P_{\beta}(R^l)$ 表示路由权重集合 $R^l$ 中的 $\beta$  分位数，其中 $\beta = 1 - \frac{C}{S}$ 且 $C$ 是用户定义好的每个 batch 中的计算容量（再回顾计算容量就是用来定义将会被处理的 token 数，显然我们需要保证 $C < S$ ） 。对于给定的 token，Transformer block 输出为：
+除了使用路由权重进行 top-k 集合的选择，**我们的目标是使用路由权重来决定每个 token 通过 Transformer block 的计算输出**。假设 $P_{\beta}(R^l)$ 表示路由权重集合 $R^l$ 中的 $\beta$  分位数，其中 $\beta = 1 - \frac{C}{S}$ 且 $C$ 是用户定义好的每个 batch 中的计算容量（再回顾计算容量就是用来定义将会被处理的 token 数，显然我们需要保证 $C < S$ ） 。对于给定的 token，Transformer block 输出为：
 
 $$
 x_i^{l+1}= \begin{cases}  r_i^l f_i (\tilde{X}^l)+x_i^l, & \text{ if } r_i^l>P_\beta (R^l) \\\\ x_i^l, & \text{ if } r_i^l < P_\beta ( R^l ) \end{cases}
@@ -158,11 +160,11 @@ $$
 3. **生成目标标签**：生成一个与 `logits` 大小相同的 `target` 张量。对于属于 top-k 的 token，其对应的 target 设为 1，其余设为 0。
 4. **计算损失**：使用二元交叉熵损失，将 logits 进行 `sigmoid` 后与 `target` 进行比较，计算损失并进行反向传播。
 
-直观的说，这个辅助损失能够使得在 top-k 中的 token 经过 router 输出的 `logits` 在 `sigmoid` 后大于 0.5 （趋近 $1$ ），而不在 top-k 中的 tokens 则小于 $0.5$ （趋近于 $0$ )
+直观的说，这个辅助损失能够使得在 top-k 中的 token 经过路由输出的 `logits` 在 `sigmoid` 后大于 0.5 （趋近 $1$ ），而不在 top-k 中的 tokens 则小于 $0.5$ （趋近于 $0$ )
 
 > 📖：由于 `BCEWithLogitsLoss` 会自动使用 `sigmoid` 处理输入，所以我们在代码中不需要显式的调用。
 
-第二个方法是引入一个小型的辅助 MLP（类似于第二个 router），它会接受与路由相同的输入，但是会 stop gradient （也就是禁止梯度回传，避免影响输入的梯度）。它的输出是预测该 token 的路由权重是否在该序列的 top-k 集合中。由于 stop gradient 的存在，该方法不会影响语言建模的目标，并且实验证明也不会影响 `step` 的效率。
+第二个方法是引入一个小型的辅助 MLP（类似于第二个路由），它会接受与路由相同的输入，但是会 stop gradient （也就是禁止梯度回传，避免影响输入的梯度）。它的输出是预测该 token 的路由权重是否在该序列的 top-k 集合中。由于 stop gradient 的存在，该方法不会影响语言建模的目标，并且实验证明也不会影响 `step` 的效率。
 
 > **Q:** 什么是 **stop gradient** ？它和 `PyTorch` 中常见的 `no_grad` 有什么区别？
 >
@@ -174,7 +176,7 @@ $$
 >
 > **Q:** 为什么方法二不会影响语言建模的目标而方法一会？
 >
-> **A:** 因为方法一中，router 引入了辅助任务，辅助损失会影响 router 的权重从而影响语言建模。而方法二中，我们用了辅助 MLP 来处理这个问题，并且 stop gradient 保证了该辅助任务的训练不会影响到输入的梯度，自然不会影响语言建模的效果。
+> **A:** 因为方法一中，路由引入了辅助任务，辅助损失会影响路由的权重从而影响语言建模。而方法二中，我们用了辅助 MLP 来处理这个问题，并且 stop gradient 保证了该辅助任务的训练不会影响到输入的梯度，自然不会影响语言建模的效果。
 
 借助这两个新方法，我们可以在**自回归**采样中仅通过路由的输出判断 token 是否参与 Transformer block 的计算，而不需要依赖未来的 token。**经验证明判断一个 token 是否在 top-k 集合中是个相对简单的辅助任务，可以快速实现到 99% 的准确率。**
 
@@ -238,7 +240,7 @@ $$
 
 ![MoD_Routing_Analysis](./assets/MoD_Routing_Analysis.png)
 
-***Figure5.Explanation*** isoFLOP analysis. 我们训练了一个 MoD Transformer，在其中交替使用了 12.5% 容量的 Transformer block 和标准的 Transformer block。正如我们所预想的，使用了路由的 Transformer Block 中仅有稀疏的 token 参与计算，尽管网络有时候仍倾向于**让某些 token 一直参与计算**。（可以参考左图中序列的尾部，存在部分连续且垂直的蓝色色块）同时，如右图所示，路由器权重的分布与辅助 loss 的要求一致：大约 12.5% 的权重超过 0.5，87.5% 的权重低于 0.5（右侧直方图）。
+***Figure5.Explanation*** Routing analysis. 我们训练了一个 MoD Transformer，在其中交替使用了 12.5% 容量的 Transformer block 和标准的 Transformer block。正如我们所预想的，使用了路由的 Transformer Block 中仅有稀疏的 token 参与计算，尽管网络有时候仍倾向于**让某些 token 一直参与计算**。（可以参考左图中序列的尾部，存在部分连续且垂直的蓝色色块）同时，如右图所示，路由器权重的分布与辅助 loss 的要求一致：大约 12.5% 的权重超过 0.5，87.5% 的权重低于 0.5（右侧直方图）。
 
 图 5 展示了基于**间隔路由**训练的 MoD Transformer 的路由架构。尽管路由的策略非常激进（设置了非常小的容量），MoD Transformer 相对 baseline 仍存在性能提升。同时，图 5 也展示了一些有趣的现象值得进一步研究。即有些 tokens 似乎随着 Transformer 计算的深入参与每个块的计算，而其他 tokens 则尽可能选择跳过计算。**初步分析表明，那些频繁参与计算的 tokens 与具有更高熵的输出预测相关，这可能对应于更难预测的情况**。
 
