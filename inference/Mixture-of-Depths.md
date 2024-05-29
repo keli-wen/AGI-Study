@@ -8,6 +8,10 @@
 
 由于 MoD 是没有开源的，我这里做了非官方版本的代码实现，但还存在一些设计没有和原始论文中对齐。[代码仓库](https://github.com/Mixture-AI/Mixture-of-Depths)
 
+![MoD-header](./assets/MoD-header.png)
+
+该图是为了方便快速理解 MoD 的大致流程所做草图，隐去了诸多细节，仅给出一些直觉上的信息。
+
 ## 0. Abstract
 
 基于 Transformer 的语言模型通常会将 FLOPs （运算量） 均匀分配给整个输入序列。然而，Mixutre-of-Depths 证明了 Transformer 可以学会动态地将 FLOPs（或计算资源）分配给序列中的**特定位置**，从而可以在不同深度（不同 Layer）上优化序列的计算资源分配。
@@ -18,7 +22,7 @@ MoD 通过限制**可参与**标准 Transformer block（Self-Attention 和 MLP�
 
 ## 1. Introduction
 
-平时工作中，我们能感受到**并非所有的问题都需要相同的资源来解决**，有些任务更重要需要投入更多的计算资源，有些任务不重要可以简单处理甚至略过。同样地，在语言建模中，并非所有的 tokens 都需要投入相同的资源（即算力）来进行处理。然而，transformer 模型在前向传播中对每个 token 都花费相同的计算量。**如果前面的假设正确，理想情况下，Transformers 可以通过避免不必要的计算来减少总计算开销。**
+平时工作中，我们能感受到**并非所有的问题都需要相同的资源来解决**，有些任务更重要需要投入更多的计算资源，有些任务不重要可以简单处理甚至略过。同样地，在语言建模中，并非所有的 tokens 都需要投入相同的资源（即算力）来进行处理。然而，transformer 模型在前向传播中对每个 token 都花费相同的计算量。**如果前面的假设正确，理想情况下，Transformers 可以通过避免不必要的计算来减少总计算开销。**（参考最开始的那张图）
 
 这其实就涉及到了 Conditional Computation （条件计算）。该技术试图通过在需要时才进行计算来减少总计算开销。有兴趣的可以阅读[《ICLR2016: CONDITIONAL COMPUTATION IN NEURAL NETWORKS FOR FASTER MODELS》](https://arxiv.org/pdf/1511.06297)。
 
