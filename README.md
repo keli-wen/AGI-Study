@@ -34,7 +34,7 @@
 - [ ] `Batch-Inference-Optimization.md`：（施工中）Basic 的进阶版。
 - [ ] `vLLM`: （施工中）介绍 `vLLM` 的使用，**以及后续的 `vLLM` 核心原理和代码的探索。**
 - [ ] `TensorRT-LLM`：目前是非常简单的介绍了 `TensorRT-LLM` 的使用信息。
-- [ ] `Mixture of Depth`：（施工中）关于 MoD 的最新介绍。
+- [x] `Mixture of Depth`：关于 MoD 的最新介绍，Transformer-based 模型的动态算力分配。
 - [ ] `Nvidia Triton Inference Server`：首先进行工具扫盲，然后主要从应用的角度介绍这个工具的使用。
 - [ ] `Quantization in LLM`：（施工中） 
 
