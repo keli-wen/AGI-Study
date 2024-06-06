@@ -23,6 +23,10 @@
   - [ ] DeepSpeed -- ZeRO 原理介绍（见知乎，待搬运）。
   - [ ] DeepSpeed 实战（环境配置，Example）（TODO，Low Priority）[Refer: DeepSpeed PR](https://github.com/microsoft/DeepSpeedExamples/pull/843).
 
+## Tokenizer
+- [x] Byte-Pair Encoding 算法解读。
+- [ ] Google SentencePiece 库使用介绍。
+
 ## Inference & Deploy
 
 > 这部分主要介绍推理优化和部署相关的内容。
