@@ -12,7 +12,8 @@
 
 > 这部分主要介绍 DL 环境配置相关的内容。
 
-- [x] [**CUDA** Related Env Config](https://github.com/keli-wen/AGI-Study/blob/master/env/cuda-related.md)：介绍 GPU Driver Version，Cuda Toolkit Version 的更新。包括多 Cuda 版本管理等。
+- [x] [**CUDA** Related Env Config](https://github.com/keli-wen/AGI-Study/blob/master/env/cuda-related/)：介绍 GPU Driver Version，Cuda Toolkit Version 的更新。包括多 Cuda 版本管理等。
+- [ ] [**Docker** Related Env Config](https://github.com/keli-wen/AGI-Study/blob/master/env/docker-related/)：Docker 的基本使用教程（菜鸟教程）。
 
 ## Train
 
