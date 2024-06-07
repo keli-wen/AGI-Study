@@ -54,7 +54,7 @@ Wed Jan 24 11:43:58 2024
 
 假设你的期望 CUDA 版本是 $X$，NVCC 得到的版本是 $Y$，NVIDIA-SMI 得到的版本是 $Z$。如果你需要进行 CUDA-Related Env 配置，大致流程为：
 
-1. 首先应该看，$X$ 是否大于 $Z$。如果大于 $Z$，则需要先**更新 GPU Driver**，然后跳转至步骤 2。
+1. 首先应该看， $X$ 是否大于 $Z$。如果大于 $Z$，则需要先**更新 GPU Driver**，然后跳转至步骤 2。
 2. 如果 $X$ 小于 $Z$，那么我们只需要**更新 NVCC 即可**。
 
 ## 1. 🔥 Update (Cuda) GPU Driver and CUDA Toolkit.
