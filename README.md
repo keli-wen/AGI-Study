@@ -8,6 +8,16 @@
 - [x] [`chat-llm-v1`](https://github.com/keli-wen/AGI-Study/tree/master/code-examples/chat-llm-v1)：基于 `PyTriton`，`Streamlit` 和 `DeepSeek` 制作的最简化 Chat Project。
 - [ ] `chat-llm-v2`：基于 `chat-llm-v1` 制作的 `vision language` 版本，并优化了多模型选择，dynamic batching 和 streaming output 等新特性。（施工中）
 
+## 🔥 LLM Dev Best-Practice
+
+由于我认为 LLM Dev 才是我等普通人能做的事情，我最近在全力学习一些 Agentic System / RAG / Prompt Engineering 的最佳实践（基于 OpenAI / Anthropic / Google 等公司的技术博客），以及如何从 experimental 到 production 的最佳实践。这部分预计包括：
+
+- [ ] **Agentic System**：关于如何构建有效的 Agent 的最佳实践。
+  - [x] [Anthropic - Building Effective Agents](best-practice/Anthropic%20-%20Building%20effective%20agents/README.md) 
+- [ ] **RAG**：如何设计和优化 RAG 的最佳实践。
+- [ ] **Prompt Engineering**：如何设计和优化 Prompt 的最佳实践。
+- [ ] **LLM Dev**：如何从实验到生产的最佳实践。
+
 ## Environment
 
 > 这部分主要介绍 DL 环境配置相关的内容。
