@@ -19,8 +19,8 @@
 
 `⏰ Read: 25min`
 
----
-
+> [!NOTE]
+>
 > **指令缓存 (prompt caching) 是一种用于降低延迟和成本的技术。**
 
 这句话介绍了 prompt caching 的具体作用。
