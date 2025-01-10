@@ -8,12 +8,14 @@
 
 - 什么是 prompt caching ？为什么需要 prompt caching？
 - prompt caching 的原理是什么？
-- 我们作为 user 和 developer 如何更好的利用 prompt caching 呢？
+- 我们作为 user 和 developer 如何更好的使用 prompt caching 呢？
 - prompt caching 和 KV caching 有关系吗？使用 prompt caching 时是否会反过来影响输出的质量呢？
 
 我会基于 OpenAI 的[博客](https://platform.openai.com/docs/guides/prompt-caching)，论文 [Prompt Cache: Modular Attention Reuse for Low-Latency Inference](https://arxiv.org/abs/2311.04934) 和我自己检索的信息，带着上面这四个问题尽力构建一篇足够简洁的博客。
 
 当然，对于用户，我们追求的**可能只是如何高效的利用这个特性**。如果把原理混杂在 **best practice** 中非常影响阅读的流畅性，因此我会分成**如何使用**和**深入理解**两个章节，力求一气呵成的阅读流畅性。水平有限，欢迎指正！
+
+- Update 2025/01/10: 进一步阐述了基于 PML 的 Prompt Cache 如何处理位置编码问题。
 
 ## 如何使用
 
@@ -68,9 +70,9 @@ TTFT 和 prompt 的长度密切相关，对于长 prompt 来说，大部分延�
 >  请保持专业术语的准确性。"
 > ```
 >
-> 这一个 prompt 只是一个例子，但是我们发现，它只用中间会有变动，在这种情况下基于前缀匹配的 prompt caching 会无法 caching 后半部的静态内容。
+> 这一个 prompt 只是一个例子，但是我们发现，它只有中间会有变动，在这种情况下基于前缀匹配的 prompt caching 会无法 caching 后半部的静态内容。
 >
-> 这时候 Claude 支持的 `cache_control` 特性就更具灵活性（因为我们可以把上面的 prompt 拆成三个部分，然后分别用 `cache_control` 修饰第一个和第三个部分） 。当然，后文中我们还会介绍另外一种方法， 但是我认为它不够**用户友好**，前缀匹配是一个非常简洁也在绝大部分情况下都奏效的匹配策略，这里的选择是工程上的 tradeoff。如果你觉得该方法不够好用那么恭喜你你已经是 advanced 的用户了！
+> Claude 支持的 `cache_control` 特性就更具灵活性，它可以分别 caching 不同的文本（因为我们可以把上面的 prompt 拆成三个部分，然后分别用 `cache_control` 修饰第一个和第三个部分） 。当然，后文中我们还会介绍另外一种方法， 但是我认为这种方法的缺陷是不够**用户友好**，前缀匹配是一个非常简洁，也在绝大部分情况下都奏效的匹配策略，这里的选择本质上是工程的 tradeoff。
 
 ### Best practices for effective caching
 
@@ -120,7 +122,7 @@ prompt caching 也是干这事的，“**复用**之前计算的结果”，那�
 
 所以回过来 prompt cache 和 kv cache 的区别在于： **prompt cache 提供的是一个跨序列的 cache，它的效果也是作用于全局（多次）而非单次推理。**
 
-KV cache 不会影响推理的效果，同理使用 prompt cache 也不会影响推理的效果。大家不用担心影响任务质量。而 prompt cache 最大的问题就是如何**维护与识别**，区别于 kv cache 本质上是“**一定**”会被复用，prompt cache 可能会面临存储后无人问津的尴尬情况，并且**如何识别**也是影响缓存命中的关键因素。
+prompt cache 最大的问题就是如何**维护与识别**，区别于 kv cache 本质上是“**一定**”会被复用，prompt cache 可能会面临存储后无人问津的尴尬情况，并且**如何识别**也是影响缓存命中的关键因素。
 
 ### Prompt Cache Matching Mechanisms
 
@@ -136,17 +138,31 @@ KV cache 不会影响推理的效果，同理使用 prompt cache 也不会影响
 
 正如我们在问题中提到的，当前缀匹配遇到只有中间某处不同的 prompt 时，它就失效了。而 PML 通过明确标记出这些可变部分，巧妙地解决了这个问题。我举一个简单的例子大家一看便知：
 
-<img src="./assets/pml-example.png" alt="image-20250108233439303" style="zoom:40%;" />
+<img src="./assets/pml-example.png" alt="pml-example" style="zoom:40%;" />
 
 - `<item>`、`<quantity>` 和 `<no>` 是**可变槽位**，代表可以更改的部分。
 - 其余部分是**固定文本**。
 
 现在，即使两个顾客点了不同的菜品、数量和忌口，PML 都能识别出它们遵循相同的模板，并准确地识别出哪些部分是可变的。所以相较于粗暴的前缀匹配，PML 可以基于模版识别实现更准确的匹配， 并且得到更高效的缓存。
 
+> [!IMPORTANT]
+>
+> **我们还需要考虑一个问题：只有当一个文本片段在大型语言模型（LLM）输入中出现在相同位置时，其注意力状态才能被重用。** 原因是，Transformer 将位置信息整合到了键（k）和值（v）注意力状态中。对于单个 prompt 的 KV cache 而言，这并不是问题，因为在所有步骤中，相同的 prompt 都位于相同的位置，即输入的开头。
+>
+> 那么如果我们使用非前缀匹配，就会遇到这个问题，即如何处理位置编码？共享的文本在不同 prompt 中可能出现在不同位置。为了实现跨 prompt （也就是不同位置）的注意力状态重用，cache system 必须解决两个问题。首先，**尽管一个文本片段可能出现在不同 prompt 的不同位置，系统仍须支持其重用**。其次，当系统接收到一个新的提示时，它必须能够高效地识别出其注意力状态可能已被缓存的文本片段，从而实现重用。
+>
+> 为解决这两个问题，论文结合了两种思路。首先，提出使用提示标记语言（PML）来明确提示的结构，将可重用文本片段明确表示为 module，即 prompt module。PML 很好的解决了上述的第二个问题（识别哪些是重复文本片段），还为解决第一个问题提供了可能，因为每个 prompt module 都可以被分配唯一的 Position IDs。**其次，我们通过实验发现，LLM 可以处理带有不连续 Position IDs 的注意力状态。只要令牌间的相对位置保持不变，输出质量就不会受到影响。**（*Our second idea is our empirical finding that LLMs can operate on attention states with discontinuous position IDs. As long as the relative position of tokens is preserved, output quality is not affected.*）这意味着，我们可以提取不同的注意力状态片段，并将它们拼接起来以构建新的语义。利用这一特性，用户可以根据自身需求选择提示模块，甚至在运行时替换某些含义。
+>
+> 那另一个问题是：由于位置的变化，即使相同的文本，在真正推理时也会是不同的 kv attention state。但是，此处，我们使用的是相同的 kv attention state，是否会影响输出质量呢？在论文 5.3 节中提到：**在所有数据集中，使用 prompt cache 输出的准确性与 baseline 相当**。（但是仍然会有细微差异，所以基于 PML 的 prompt cache 并不像 kv cache 一样是完美的替换。
+>
+> 当然，这里的解释还点模糊，我暂时留下一个坑，阅读完相关代码后我会在这里尝试进一步解释什么是：“LLM 可以处理带有不连续 position ids 的注意力状态“。
+
 同时，如何前文所说：Claude 提供的 `cache_control` 特性某种程度上可以实现**类 PML**的效果。对比 OpenAI 和 Claude：
 
 - OpenAI 提供一个更直接的 caching 策略，更用户友好，但是在特定情况下容易失效。
 - Claude 提供的是一个更专业的caching 策略，初学者可能难以看懂，但是学会后可以实现最佳的缓存性能。
+
+回答最后一个问题：“**使用 prompt caching 时是否会反过来影响输出的质量呢？**” KV cache 是不会影响推理的效果，因为它是等价替换。同理使用基于前缀匹配的 prompt cache 也不会影响推理的效果。但是，在上文分析中，我们发现虽然实验结论证明基于 PML 的 prompt cache 能和 baseline 得到接近的输出，但是它们之间还是存在不同，并不是完美的等价，所以在使用基于 PML 的 prompt cache 时应当考虑匹配机制对于输出质量的影响。
 
 本篇到此完结，当前其实还有一些细节可以深入挖掘，但是我觉得我已经回答了文章开始处的四个问题。就像 OpenAI 一样，我这里就提供一个“简单粗暴”的概览，以供大家了解什么是 prompt caching 以及 prompt caching 的 best practice。
 
